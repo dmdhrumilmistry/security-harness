@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Security Harness Finding",
+  "description": "One vulnerability finding. Written by sh-hunter (status=candidate), enriched by sh-chainer (chained_with), and finalized by sh-verifier (status + poc + cvss). One JSON object per line in findings.jsonl / verified.jsonl.",
+  "type": "object",
+  "required": ["id", "class", "title", "severity", "file", "line", "confidence", "status", "why_it_matters"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable unique id, format SH-<CLASS>-<NNN>, e.g. SH-SQLI-001. Assigned by the hunter; never reused."
+    },
+    "class": {
+      "type": "string",
+      "description": "Vulnerability class slug, matching an sh-kb-* skill (e.g. 'sqli', 'access-control', 'ssrf').",
+      "enum": ["access-control", "sqli", "xss", "ssrf", "injection", "auth", "deserialization", "path-traversal", "secrets", "csrf", "xxe", "open-redirect", "crypto", "race-conditions", "file-upload", "dependency", "other"]
+    },
+    "title": { "type": "string", "description": "Short, specific title (<= 12 words).", "maxLength": 120 },
+    "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"], "description": "Business-impact severity. See references/severity-rubric.md." },
+    "cvss": {
+      "type": "object",
+      "description": "Optional CVSS v3.1 scoring. Filled by the verifier.",
+      "properties": {
+        "score": { "type": "number", "minimum": 0, "maximum": 10 },
+        "vector": { "type": "string", "description": "CVSS 3.1 vector string, e.g. CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }
+      }
+    },
+    "cwe": { "type": "array", "items": { "type": "string", "pattern": "^CWE-[0-9]+$" }, "description": "One or more CWE ids, e.g. [\"CWE-89\"]." },
+    "owasp": { "type": "array", "items": { "type": "string" }, "description": "OWASP Top 10 (2021) categories, e.g. [\"A03:2021-Injection\"]." },
+    "file": { "type": "string", "description": "Repo-relative path to the primary sink." },
+    "line": { "type": "integer", "minimum": 1, "description": "Primary line number of the sink." },
+    "source": { "type": "string", "description": "Where attacker-controlled input enters (file:line + description)." },
+    "sink": { "type": "string", "description": "The dangerous operation the tainted data reaches (file:line + description)." },
+    "data_flow": {
+      "type": "array",
+      "description": "Ordered taint path from source to sink. Each step is a hop through the code.",
+      "items": {
+        "type": "object",
+        "required": ["file", "line", "note"],
+        "properties": {
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "note": { "type": "string", "description": "What happens to the tainted value at this hop (e.g. 'concatenated into query', 'no sanitization applied')." }
+        }
+      }
+    },
+    "why_it_matters": { "type": "string", "description": "Impact and failure mode: what an attacker gains, not merely what is wrong." },
+    "payload": { "type": "string", "description": "Concrete probe/exploit payload string (curated from the class KB, adapted to this sink)." },
+    "poc": { "type": "string", "description": "Reproduction steps or a runnable snippet/curl the verifier used or would use to confirm exploitability." },
+    "confidence": { "type": "integer", "minimum": 0, "maximum": 100, "description": "0-100. Hunter's initial confidence; verifier overwrites with post-verification confidence." },
+    "status": {
+      "type": "string",
+      "enum": ["candidate", "verified", "false-positive", "needs-runtime"],
+      "description": "candidate=hunter-reported, unverified. verified=verifier confirmed exploitable from evidence. false-positive=verifier refuted. needs-runtime=plausible but requires a running target/credentials to confirm."
+    },
+    "verification": {
+      "type": "object",
+      "description": "Verifier's reasoning. Present when status != candidate.",
+      "properties": {
+        "verdict": { "type": "string", "enum": ["confirmed", "refuted", "inconclusive"] },
+        "rationale": { "type": "string", "description": "Why the verdict holds: which guard is missing/present, why the sanitizer fails, etc." },
+        "reproduced": { "type": "boolean", "description": "True only if the verifier statically constructed a complete, unbroken source->sink exploit path." }
+      }
+    },
+    "chained_with": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Finding ids this combines with in an escalation chain (see chains.md). Empty if standalone."
+    },
+    "mitigation": { "type": "string", "description": "Specific, code-level remediation (parameterize this query, add this authz check), not generic advice." },
+    "evidence": { "type": "string", "description": "The exact code snippet(s) supporting the finding, with file:line anchors." },
+    "pre_existing": { "type": "boolean", "description": "True if the issue exists in code not changed by the reviewed diff (whole-repo scans set false/omit)." }
+  }
+}

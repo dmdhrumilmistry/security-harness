@@ -1,0 +1,22 @@
+{
+  "name": "security-harness",
+  "version": "0.1.0",
+  "description": "Multi-agent application-security review harness. A router skill dispatches to a full pipeline (recon -> hunt -> chain -> verify -> report) backed by ~15 per-class vulnerability knowledge skills, using Graft for codebase mapping and SCA tools for SBOM/CVE.",
+  "author": {
+    "name": "Dhrumil Mistry",
+    "email": "dhrumil.mistry@verbaflo.ai"
+  },
+  "homepage": "https://github.com/dmdhrumilmistry/security-harness",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "appsec",
+    "sast",
+    "owasp",
+    "cwe",
+    "sarif",
+    "graft",
+    "multi-agent",
+    "vulnerability-review"
+  ]
+}
