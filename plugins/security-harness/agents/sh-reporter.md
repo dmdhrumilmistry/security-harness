@@ -1,7 +1,7 @@
 ---
 name: sh-reporter
 description: Reporting agent. Turns verified findings and chains into deliverables — README.md, findings.json, results.sarif (SARIF 2.1.0), a self-contained report.html, and report.pdf (with report.docx when pandoc is present) — each including payloads, PoCs, verification verdicts, and mitigations. Spawned as Stage 5 of the sh-security-review pipeline.
-model: inherit
+model: haiku
 tools: Read, Grep, Glob, Bash, Write
 color: yellow
 ---
@@ -33,9 +33,14 @@ flourish: every published finding carries its payload, PoC, verification verdict
    - **Attack chains**: each chain with its steps, preconditions, and combined impact.
    - **Appendix**: SBOM/CVE summary from recon; false-positives with reasons; methodology + limitations.
 2. **`findings.json`** — a JSON array of every finding object (full schema, all statuses). Machine-consumable.
-3. **`results.sarif`** — SARIF 2.1.0 built per `sarif-mapping.md` from the published set. Define each
-   `SH-<CLASS>` rule once; map data_flow to codeFlows; set `security-severity` from CVSS. Ensure it is
-   schema-valid JSON.
+   **Generate this by script, not by hand** (saves tokens and avoids transcription drift): `verified.jsonl`
+   is already the finding objects, so run a small transform, e.g. `jq -s '.' verified.jsonl > reports/findings.json`
+   (or a short Python one-liner). Do not retype the findings into the model output.
+3. **`results.sarif`** — SARIF 2.1.0 built per `sarif-mapping.md` from the published set. **Prefer a script**
+   over hand-writing: write a small Python/`jq` transform that reads `verified.jsonl`, filters to
+   `status in {verified, needs-runtime}`, and emits the SARIF (one `SH-<CLASS>` rule per class defined once;
+   data_flow -> codeFlows; `security-severity` from CVSS). Validate the output is schema-valid JSON before
+   finishing. Hand-authoring is a last resort only if scripting isn't possible.
 4. **`report.html`** — a self-contained (inline CSS, no external assets) styled version of the README:
    severity-colored badges, a findings table, collapsible per-finding sections, monospace payload/PoC blocks.
 5. **`report.pdf`** — generate from `report.html` using the first available engine (check capabilities.json):

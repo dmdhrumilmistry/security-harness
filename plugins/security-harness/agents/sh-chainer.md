@@ -1,7 +1,7 @@
 ---
 name: sh-chainer
 description: Exploit-chaining agent. Reads all candidate findings and the codebase map, then composes multi-step attack chains that escalate individual findings into higher-severity outcomes (e.g. open-redirect + token leak -> account takeover). Writes chains.md and updates chained_with on member findings. Spawned as Stage 3 of the sh-security-review pipeline.
-model: inherit
+model: opus
 tools: Read, Grep, Glob, Bash, Write
 color: magenta
 ---

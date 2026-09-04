@@ -35,6 +35,52 @@ Parse `$ARGUMENTS` (all optional):
   Requires a prior run (reads `latest`). Default: run all stages 0->5.
 - **`depth:quick|deep`**: `deep` -> `graft build --deep` and larger hunter budgets. `quick` -> structural
   graft only, tighter budgets. Default: `deep` if the repo is small (< ~1500 files), else `quick`.
+- **`models:<preset>` and/or `models:<stage>=<model>,...`**: override the model each stage runs on
+  (see "Model selection" below). Omit entirely to use the skill defaults.
+
+## Model selection
+
+Each stage runs on the model matched to its cognitive load, so tokens are spent where discovery quality
+actually depends on them (verification, chaining, deep-logic hunting) and saved on mechanical work (recon,
+reporting, pattern hunting). Models: `opus` (strongest), `sonnet` (balanced), `haiku` (cheap/fast), or
+`inherit` (the session's current model). When you spawn a stage's agent, pass its resolved model via the
+Agent tool `model` parameter; if the resolved value is `inherit`, spawn without a `model` override.
+
+**Default model map (used when no `models:` arg is given):**
+
+| Stage | Default model | Notes |
+|---|---|---|
+| setup (this orchestrator) | inherit | Whatever the user is running. |
+| recon (`sh-recon`) | sonnet | Mechanical, but feeds hunters — don't drop to haiku. |
+| hunt (`sh-hunter`) | **tiered per class** | See table below. |
+| chain (`sh-chainer`) | opus | Small input, high escalation payoff. |
+| verify (`sh-verifier`) | opus | Precision gate — keep strongest model. |
+| report (`sh-reporter`) | haiku | Faithful formatting, near-zero reasoning. |
+
+**Hunter tiering (default for the `hunt` stage — one model per class):**
+
+| Tier | Classes | Model |
+|---|---|---|
+| pattern | secrets, crypto, open-redirect, csrf | haiku |
+| trace | sqli, xss, ssrf, injection, path-traversal, xxe, file-upload, auth | sonnet |
+| logic | access-control, race-conditions, deserialization | opus |
+
+**Presets** (a whole-pipeline shortcut; per-stage overrides still win over a preset):
+- `models:default` — the tables above (same as omitting the arg).
+- `models:max` — every stage **and** every hunter on `opus` (max recall/precision, max cost).
+- `models:cheap` — recon=haiku, hunt=sonnet (flatten: all hunters sonnet, no opus tier), chain=sonnet,
+  verify=sonnet, report=haiku. Cuts cost most; note to the user it trades some verification precision.
+
+**Granular overrides** — `models:<stage>=<model>` for `stage` in {setup, recon, hunt, chain, verify, report},
+comma-separated, combinable with a preset (granular wins). For the hunt stage:
+- `hunt=<model>` flattens **all** hunters to one model (disables tiering).
+- `hunt.pattern=<model>`, `hunt.trace=<model>`, `hunt.logic=<model>` override an individual tier.
+
+Examples: `models:cheap` · `models:verify=opus,hunt=sonnet` · `models:max` ·
+`models:report=sonnet,hunt.pattern=sonnet`.
+
+Resolve the effective model map at Stage 0, record it in `scope.json` under `models`, and include it in the
+Stage 0 announcement so the user sees exactly what each stage will run on.
 
 ## Stage 0 — Setup (orchestrator does this directly)
 
@@ -66,19 +112,24 @@ Parse `$ARGUMENTS` (all optional):
 6. **Write `capabilities.json`** (see state-files.md) from the post-install probes, recording which tools
    were installed this run and any that could not be (with a short reason in `notes`). Also note whether
    claude-in-chrome browser tools are available (Chrome PDF fallback).
-7. Write `scope.json` (target, include/exclude globs — exclude `**/{test,tests,spec,node_modules,vendor,dist,build,.git}/**`
-   by default unless the user says otherwise, classes, run_id, mode).
-8. If writing inside a git repo and `.security-harness/` is untracked, add it to `.gitignore`.
-9. Announce the plan to the user: target, detected capability matrix (incl. which tools were installed this
-   run and which are unavailable), classes to be hunted, depth.
+7. **Resolve the effective model map** (see "Model selection"): start from the defaults, apply a `models:`
+   preset if given, then apply any granular `models:<stage>=...` overrides (granular wins). Store the result
+   in `scope.json` under `models` as `{ setup, recon, hunt: {pattern, trace, logic} | "<model>", chain,
+   verify, report }`.
+8. Write `scope.json` (target, include/exclude globs — exclude `**/{test,tests,spec,node_modules,vendor,dist,build,.git}/**`
+   by default unless the user says otherwise, classes, run_id, mode, models).
+9. If writing inside a git repo and `.security-harness/` is untracked, add it to `.gitignore`.
+10. Announce the plan to the user: target, detected capability matrix (incl. which tools were installed this
+    run and which are unavailable), classes to be hunted, depth, **and the resolved model per stage**.
 
 If `stage:<name>` was passed, skip to that stage using the existing `latest` run (do not recreate state).
 
 ## Stage 1 — Recon (spawn `sh-recon`)
 
-Spawn one `sh-recon` agent. In its prompt pass: `run_dir`, `scope.json` contents, and a pointer to the
-references above. It must produce `recon.md` + `codebase-map.json` (build the Graft graph, detect
-stack/versions, run SCA tools if present for SBOM/CVE else parse manifests, enumerate attack surface).
+Spawn one `sh-recon` agent **with `model` = `scope.models.recon`** (default sonnet). In its prompt pass:
+`run_dir`, `scope.json` contents, and a pointer to the references above. It must produce `recon.md` +
+`codebase-map.json` (build the Graft graph, detect stack/versions, run SCA tools if present for SBOM/CVE
+else parse manifests, enumerate attack surface).
 
 After it returns: read `recon.md`. Decide the **class list** to hunt — the user's `classes:` if given,
 else the classes whose sinks/surface recon actually found (don't hunt XXE if there's no XML parsing).
@@ -87,10 +138,12 @@ Log the decision to the user.
 ## Stage 2 — Hunt (spawn `sh-hunter` in parallel, one per class)
 
 Spawn the hunters **concurrently** (multiple Agent tool calls in a single message), **one instance per
-selected class**. Each hunter prompt includes: `run_dir`, its assigned `class`, the finding-id prefix to
-use (`SH-<CLASS-UPPER>-`), and the instruction to load the matching `sh-kb-<class>` skill for its
-knowledge base. Hunters must read `attempts.md` before probing and append to it after, and append
-candidate findings to `findings.jsonl`.
+selected class**. **Set each hunter's `model` from `scope.models.hunt`**: if it's a string, use it for
+every hunter (flattened); if it's the tiered object, look up the class's tier (pattern/trace/logic per the
+Model-selection table) and use that tier's model. Each hunter prompt includes: `run_dir`, its assigned
+`class`, the finding-id prefix to use (`SH-<CLASS-UPPER>-`), and the instruction to load the matching
+`sh-kb-<class>` skill for its knowledge base. Hunters must read `attempts.md` before probing and append to
+it after, and append candidate findings to `findings.jsonl`.
 
 Batch to respect concurrency limits: if more than ~6 classes, spawn in waves. Between waves, nothing to
 merge — hunters coordinate via `attempts.md`.
@@ -99,14 +152,14 @@ After all hunters return: report a count of candidates per class to the user.
 
 ## Stage 3 — Chain (spawn `sh-chainer`)
 
-Spawn one `sh-chainer`. It reads `findings.jsonl` + `codebase-map.json`, composes escalation chains,
+Spawn one `sh-chainer` **with `model` = `scope.models.chain`** (default opus). It reads `findings.jsonl` + `codebase-map.json`, composes escalation chains,
 writes `chains.md`, and updates the `chained_with` arrays of member findings in `findings.jsonl`
 (rewrite the file: read all lines, patch the relevant objects, write back atomically). Skip this stage
 only if there are fewer than 2 candidate findings.
 
 ## Stage 4 — Verify (spawn `sh-verifier`)
 
-Spawn one `sh-verifier`. It reads `findings.jsonl` + `chains.md` + the source, and for **every** candidate
+Spawn one `sh-verifier` **with `model` = `scope.models.verify`** (default opus — the precision gate; keep it strong). It reads `findings.jsonl` + `chains.md` + the source, and for **every** candidate
 and chain: confirms exploitability from code/data-flow evidence, builds a payload + PoC, assigns CVSS and a
 post-verification confidence, sets `status` (`verified`/`false-positive`/`needs-runtime`), and writes the
 full set to `verified.jsonl`. It must not silently drop findings — false-positives stay in the file marked
@@ -117,7 +170,7 @@ a single consolidated `verified.jsonl`.
 
 ## Stage 5 — Report (spawn `sh-reporter`)
 
-Spawn one `sh-reporter`. It reads `verified.jsonl` + `chains.md` + `recon.md` and writes into `reports/`:
+Spawn one `sh-reporter` **with `model` = `scope.models.report`** (default haiku — mechanical formatting). It reads `verified.jsonl` + `chains.md` + `recon.md` and writes into `reports/`:
 `README.md` (human summary: exec summary, severity table, per-finding detail with payload/PoC/mitigation,
 chains, appendix), `findings.json` (array of all findings), `results.sarif` (SARIF 2.1.0 per
 `sarif-mapping.md`, verified + needs-runtime only), `report.html` (self-contained), and `report.pdf`
