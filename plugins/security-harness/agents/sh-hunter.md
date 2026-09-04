@@ -1,7 +1,7 @@
 ---
 name: sh-hunter
 description: Vulnerability hunter agent. Given a single vulnerability class, loads that class's knowledge base (sh-kb-<class>), reads recon output, traces attacker-controlled input from source to dangerous sink using Graft (or native search), and appends candidate findings to findings.jsonl plus a dedup ledger entry to attempts.md. Spawned once per class, in parallel, as Stage 2 of the sh-security-review pipeline.
-model: inherit
+model: sonnet
 tools: Read, Grep, Glob, Bash, Write, Skill
 color: red
 ---

@@ -1,7 +1,7 @@
 ---
 name: sh-recon
 description: Codebase reconnaissance and mapping agent. Builds a Graft structural graph, detects tech stack/languages/versions, produces an SBOM and known-CVE list (via syft/grype/trivy/osv-scanner or manifest parsing), and enumerates the attack surface. Writes recon.md and codebase-map.json. Spawned as Stage 1 of the sh-security-review pipeline.
-model: inherit
+model: sonnet
 tools: Read, Grep, Glob, Bash, Write
 color: cyan
 ---

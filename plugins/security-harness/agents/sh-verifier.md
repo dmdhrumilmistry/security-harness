@@ -1,7 +1,7 @@
 ---
 name: sh-verifier
 description: Vulnerability verification agent combining offensive-security, security-engineering, and developer expertise. For every candidate finding and chain, confirms real exploitability from code and data-flow evidence, builds a concrete payload and PoC, assigns CVSS and confidence, and marks each verified / false-positive / needs-runtime. Writes verified.jsonl. Spawned as Stage 4 of the sh-security-review pipeline.
-model: inherit
+model: opus
 tools: Read, Grep, Glob, Bash, Write
 color: green
 ---

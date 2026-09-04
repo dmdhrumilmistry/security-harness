@@ -45,9 +45,15 @@ Prefer routing over doing the work inline — the specialized skills/agents carr
    (this harness does static analysis only; decline live attacks on third-party targets).
 3. Route per the table. When ambiguous between "full review" and "specific classes", default to a full
    review but state the assumption so the user can narrow it.
-4. Hand off by invoking the chosen skill with the parsed arguments. Do not duplicate its work here.
+4. Hand off by invoking the chosen skill with the parsed arguments. **Pass through** any `classes:`,
+   `stage:`, `depth:`, and `models:` tokens verbatim so the pipeline honors them (see the model-override
+   options in `sh-security-review`). Do not duplicate its work here.
 
 ## Notes
+- **Model / cost control**: `sh-security-review` runs each stage on a cost-appropriate model by default
+  (recon=sonnet, hunt=tiered haiku/sonnet/opus per class, chain/verify=opus, report=haiku). Users can
+  override with `models:` (e.g. `models:max`, `models:cheap`, `models:verify=opus,hunt=sonnet`) — pass these
+  through unchanged.
 - The pipeline writes everything under `<target>/.security-harness/<run-id>/`; point the user there.
 - If the user asks something outside security review (general coding), say this harness is scoped to
   security work and let the normal assistant handle it.
