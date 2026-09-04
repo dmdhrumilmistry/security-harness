@@ -34,10 +34,17 @@ access-control (IDOR/BOLA/priv-esc) · sqli · xss · ssrf · injection (cmd/cod
 
 ## Install
 
+In Claude Code, add this repo as a plugin marketplace and install the plugin:
+
 ```
-/plugin marketplace add D:\work\orca\security-harness
+/plugin marketplace add dmdhrumilmistry/security-harness
 /plugin install security-harness
 ```
+
+`/plugin marketplace add` accepts any of: a GitHub `owner/repo` (as above), a full git URL
+(`https://github.com/dmdhrumilmistry/security-harness.git`), or a local path to a clone
+(e.g. `/plugin marketplace add ./security-harness` from the directory containing your checkout).
+Then run `/plugin install security-harness` and reload when prompted.
 
 **Graft is installed and set up automatically by the pipeline.** Stage 0 runs `npm install -g
 @nanonets/graft` if it's missing (requires Node/npm), then `graft init <target> --no-agents --no-global`
