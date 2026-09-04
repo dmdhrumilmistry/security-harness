@@ -54,15 +54,23 @@ Parse `$ARGUMENTS` (all optional):
      happens in Stage 1 (recon), controlled there.
    - Set `graft_deep:true` in capabilities only if LLM creds are configured (`GRAFT_API_KEY` +
      `GRAFT_PROVIDER` + `GRAFT_MODEL`); otherwise recon uses the free structural build.
-5. **Probe remaining capabilities** and write `capabilities.json` (see state-files.md). Check each with a
-   version/help call, treating any error as absent: `graft version` (from step 4), `syft version`,
-   `grype version`, `trivy --version`, `osv-scanner --version`, `pandoc -v`, `wkhtmltopdf --version`, and
-   whether claude-in-chrome browser tools are available.
-6. Write `scope.json` (target, include/exclude globs — exclude `**/{test,tests,spec,node_modules,vendor,dist,build,.git}/**`
+5. **Install the remaining supporting tools if missing** — follow `${CLAUDE_PLUGIN_ROOT}/references/tooling-setup.md`.
+   Probe each with a version call; for any that's absent, install it via the first available package manager
+   per that matrix, **announcing each install** (these change the machine). Install only what fills a missing
+   **capability group**, not every tool: `syft` (SBOM); one CVE scanner (prefer `grype`, else `trivy`, else
+   `osv-scanner` — stop at the first that works); and one PDF engine (`wkhtmltopdf`, or `pandoc` which also
+   gives `.docx`; headless Chrome counts as a fallback so a PDF engine is optional). Prefer no-elevation,
+   non-interactive installs; never launch an elevation prompt. If an install fails or no installer exists,
+   mark the tool `false` and continue — **nothing here blocks the run.** Re-check `<tool> --version` after
+   installing.
+6. **Write `capabilities.json`** (see state-files.md) from the post-install probes, recording which tools
+   were installed this run and any that could not be (with a short reason in `notes`). Also note whether
+   claude-in-chrome browser tools are available (Chrome PDF fallback).
+7. Write `scope.json` (target, include/exclude globs — exclude `**/{test,tests,spec,node_modules,vendor,dist,build,.git}/**`
    by default unless the user says otherwise, classes, run_id, mode).
-7. If writing inside a git repo and `.security-harness/` is untracked, add it to `.gitignore`.
-8. Announce the plan to the user: target, detected capability matrix (incl. whether Graft was installed
-   this run), classes to be hunted, depth.
+8. If writing inside a git repo and `.security-harness/` is untracked, add it to `.gitignore`.
+9. Announce the plan to the user: target, detected capability matrix (incl. which tools were installed this
+   run and which are unavailable), classes to be hunted, depth.
 
 If `stage:<name>` was passed, skip to that stage using the existing `latest` run (do not recreate state).
 

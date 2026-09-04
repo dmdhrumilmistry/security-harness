@@ -46,11 +46,16 @@ auto-gitignored) is built during recon. To pre-install manually: `npm install -g
 structural build is free and needs no API key; the optional `--deep` LLM pass uses `GRAFT_API_KEY` /
 `GRAFT_PROVIDER` / `GRAFT_MODEL` when set.
 
-**Other companion tools** (all optional — the pipeline degrades gracefully if absent):
+**The other tools are also auto-installed by Stage 0 when missing** (via whatever package manager is on the
+machine — winget/choco/scoop, brew, apt, npm/pip/go — see `references/tooling-setup.md`). Installs are
+announced, prefer no-elevation methods, and never block the run: anything that can't be installed is simply
+marked unavailable and the pipeline falls back. Stage 0 installs only what fills a missing capability group:
 
-- SBOM: [`syft`](https://github.com/anchore/syft) · CVEs: [`grype`](https://github.com/anchore/grype),
-  [`trivy`](https://github.com/aquasecurity/trivy), or [`osv-scanner`](https://github.com/google/osv-scanner)
-- Reports: `wkhtmltopdf` or `pandoc` (for PDF/DOCX); otherwise you get `report.html`.
+- SBOM: [`syft`](https://github.com/anchore/syft) · CVEs: one of [`grype`](https://github.com/anchore/grype)
+  (preferred), [`trivy`](https://github.com/aquasecurity/trivy), or [`osv-scanner`](https://github.com/google/osv-scanner)
+- Reports: `wkhtmltopdf` or `pandoc` (for PDF/DOCX); otherwise you get `report.html` (or a headless-Chrome PDF).
+
+All of them are optional — the pipeline degrades gracefully to native search + manifest parsing if none install.
 
 ## Usage
 
