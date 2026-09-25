@@ -148,10 +148,23 @@ and the routing table in `skills/sh-router/SKILL.md`.
 A scheduled GitHub Action (`.github/workflows/update-knowledge-base.yml`) keeps the `sh-kb-*` knowledge
 bases fresh. **Every alternate day** (and on manual `workflow_dispatch`), it runs Claude to distill new,
 reputable public security research — OWASP, PortSwigger Research, CWE/CAPEC, NIST, MDN, curated GitHub
-repos, and public HackerOne disclosures — into small, well-sourced improvements, then **opens a pull
-request** for a maintainer to review.
+repos, and public HackerOne disclosures — into small, well-sourced improvements. A **second, adversarial
+Claude reviewer** then scans the resulting diff for malicious/injected content, and the PR is
+**auto-merged only if that reviewer approves**.
 
-Because the agent reads the open web, the workflow is built to resist **prompt injection**:
+The pipeline runs in five steps:
+
+1. **Generate** — Claude edits the KB from allowlisted sources (no commit, no push).
+2. **Open PR** — a deterministic step opens a PR from the changes.
+3. **Prepare** — check out the PR branch and capture the diff.
+4. **Review (the "second copilot")** — a *separate* Claude run inspects the diff **adversarially** for
+   prompt-injection artifacts, out-of-scope edits, secrets/exfil, PII, weaponized exploits, or
+   off-allowlist sourcing. It has **no web and no shell**, and **fails closed**: anything suspicious (or
+   any uncertainty) → REJECT.
+5. **Gate + auto-merge** — on `APPROVE` the PR is squash-merged automatically; on `REJECT` (or no verdict)
+   it stays open, gets a `needs-human-review` label, and the reviewer's findings are posted as a comment.
+
+Prompt-injection defenses, since the generator reads the open web:
 
 - **Domain allowlist.** `WebFetch` is restricted to the trusted domains in
   `.github/kb-update/trusted-sources.md` (mirrored in the workflow's `--allowedTools`). `WebSearch` can
@@ -159,13 +172,24 @@ Because the agent reads the open web, the workflow is built to resist **prompt i
 - **Content is data, not commands.** The task prompt (`.github/kb-update/prompt.md`) instructs Claude to
   treat every fetched byte as untrusted reference material and to ignore any instructions embedded in a
   page — HackerOne report bodies (user-generated) are flagged as the highest-risk tier.
-- **No shell, no push.** The agent runs with **no Bash** and cannot push. Its only output is file edits;
-  a separate deterministic step opens the PR, so **nothing reaches a protected branch without human review**.
+- **No shell, no push on the generator; the reviewer is the gate.** The generator can only edit files.
+  The independent reviewer (`.github/kb-update/review-prompt.md`) is what stands between fetched content
+  and `main` — nothing merges without its explicit approval.
 
-**Setup:** add an `ANTHROPIC_API_KEY` repository secret (Settings → Secrets and variables → Actions).
-To change which sources are allowed, edit the allowlist in `trusted-sources.md` **and** the matching
-`WebFetch(domain:...)` entries in the workflow — keep the two in sync. Each run records what it did in
-`.github/kb-update/last-run-summary.md`.
+**Setup:**
+
+- Add a **`CLAUDE_CODE_OAUTH_TOKEN`** repository secret (Settings → Secrets and variables → Actions). This
+  authenticates against **your Claude subscription's usage limits** rather than a metered API key —
+  generate it locally with `claude setup-token` (requires an active Claude Pro/Max subscription) and paste
+  the result. Both the generator and the reviewer draw on this token.
+- For auto-merge to succeed, the repo must allow squash merges and `main`'s branch protection must permit
+  the workflow's `GITHUB_TOKEN` to merge (i.e. don't require a human approval that the bot can't satisfy —
+  the adversarial reviewer is the substitute for that gate). If you'd rather keep a human in the loop, add
+  a required review on `main` and the workflow will simply leave approved PRs ready to merge.
+- To change which sources are allowed, edit the allowlist in `trusted-sources.md` **and** the matching
+  `WebFetch(domain:...)` entries in the workflow — keep the two in sync.
+
+Each run records what it did in `.github/kb-update/last-run-summary.md`.
 
 ## Roadmap
 
