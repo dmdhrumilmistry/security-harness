@@ -14,8 +14,8 @@ impact, and **reports** to README / JSON / SARIF / doc / PDF.
 security-harness/                         # a plugin marketplace
 └── plugins/security-harness/
     ├── skills/
-    │   ├── sh-router            # single entry point — routes any appsec request
-    │   ├── sh-security-review   # the pipeline orchestrator (Stages 0–5)
+    │   ├── sh-router            # single entry point - routes any appsec request
+    │   ├── sh-security-review   # the pipeline orchestrator (Stages 0-5)
     │   └── sh-kb-*  (15)        # per-vuln-class knowledge bases
     ├── agents/
     │   ├── sh-recon             # map: Graft graph + stack/SBOM/CVE + attack surface
@@ -34,7 +34,10 @@ access-control (IDOR/BOLA/priv-esc) · sqli · xss · ssrf · injection (cmd/cod
 
 ## Install
 
-In Claude Code, add this repo as a plugin marketplace and install the plugin:
+The harness ships for several agents. Full packaging details and the release
+checklist are in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
+
+**Claude Code** - add this repo as a plugin marketplace and install the plugin:
 
 ```
 /plugin marketplace add dmdhrumilmistry/security-harness
@@ -46,6 +49,22 @@ In Claude Code, add this repo as a plugin marketplace and install the plugin:
 (e.g. `/plugin marketplace add ./security-harness` from the directory containing your checkout).
 Then run `/plugin install security-harness` and reload when prompted.
 
+**Gemini CLI** - a native extension, manifest at the repo root:
+
+```bash
+gemini extensions install https://github.com/dmdhrumilmistry/security-harness
+```
+
+**opencode, Codex, or any [agentskills.io](https://agentskills.io) agent** - copy the
+skills into a discovery directory. Codex additionally picks up `AGENTS.md` on its own:
+
+```bash
+git clone https://github.com/dmdhrumilmistry/security-harness
+cd security-harness
+python scripts/sync-agent-skills.py --install agents     # ~/.agents/skills
+python scripts/sync-agent-skills.py --install opencode   # ~/.config/opencode/skills
+```
+
 **Graft is installed and set up automatically by the pipeline.** Stage 0 runs `npm install -g
 @nanonets/graft` if it's missing (requires Node/npm), then `graft init <target> --no-agents --no-global`
 to register the Graft MCP server and freshness hooks for the target repo. The graph itself (`<target>/graft/`,
@@ -54,7 +73,7 @@ structural build is free and needs no API key; the optional `--deep` LLM pass us
 `GRAFT_PROVIDER` / `GRAFT_MODEL` when set.
 
 **The other tools are also auto-installed by Stage 0 when missing** (via whatever package manager is on the
-machine — winget/choco/scoop, brew, apt, npm/pip/go — see `references/tooling-setup.md`). Installs are
+machine - winget/choco/scoop, brew, apt, npm/pip/go - see `references/tooling-setup.md`). Installs are
 announced, prefer no-elevation methods, and never block the run: anything that can't be installed is simply
 marked unavailable and the pipeline falls back. Stage 0 installs only what fills a missing capability group:
 
@@ -62,7 +81,7 @@ marked unavailable and the pipeline falls back. Stage 0 installs only what fills
   (preferred), [`trivy`](https://github.com/aquasecurity/trivy), or [`osv-scanner`](https://github.com/google/osv-scanner)
 - Reports: `wkhtmltopdf` or `pandoc` (for PDF/DOCX); otherwise you get `report.html` (or a headless-Chrome PDF).
 
-All of them are optional — the pipeline degrades gracefully to native search + manifest parsing if none install.
+All of them are optional - the pipeline degrades gracefully to native search + manifest parsing if none install.
 
 ## Usage
 
@@ -84,14 +103,14 @@ Or call the pipeline directly:
 ### Model & cost control
 
 Each stage runs on a model matched to its cognitive load, so tokens are spent where discovery quality
-actually depends on them and saved on mechanical work. **This is the default — no arguments needed.**
+actually depends on them and saved on mechanical work. **This is the default - no arguments needed.**
 
 | Stage | Default model |
 |---|---|
 | recon | `sonnet` |
 | hunt (per class) | `haiku` for pattern classes (secrets, crypto, open-redirect, csrf) · `sonnet` for source→sink tracing (sqli, xss, ssrf, injection, path-traversal, xxe, file-upload, auth) · `opus` for deep-logic classes (access-control, race-conditions, deserialization) |
 | chain | `opus` |
-| verify | `opus` (the precision gate — kept strong) |
+| verify | `opus` (the precision gate - kept strong) |
 | report | `haiku` |
 
 Override with the `models:` argument (passed through the router too):
@@ -114,25 +133,25 @@ deterministic script rather than the model.
 
 Everything lands under `<target>/.security-harness/<run-id>/`:
 
-- `recon.md`, `codebase-map.json` — the map (stack, SBOM, CVEs, attack surface).
-- `findings.jsonl` → `chains.md` → `verified.jsonl` — the working state (see `references/state-files.md`).
-- `reports/` — `README.md`, `findings.json`, `results.sarif`, `report.html`, `report.pdf` (+ `report.docx`).
+- `recon.md`, `codebase-map.json` - the map (stack, SBOM, CVEs, attack surface).
+- `findings.jsonl` → `chains.md` → `verified.jsonl` - the working state (see `references/state-files.md`).
+- `reports/` - `README.md`, `findings.json`, `results.sarif`, `report.html`, `report.pdf` (+ `report.docx`).
 
 Each published finding carries a payload, a PoC, the verification verdict, CWE/OWASP ids, CVSS, and a
 code-level mitigation.
 
 ## How it works
 
-1. **Setup** — probe available tools, define scope, create the run directory.
-2. **Recon** (`sh-recon`) — build the Graft graph; detect stack/versions; SBOM + CVEs; enumerate entry
+1. **Setup** - probe available tools, define scope, create the run directory.
+2. **Recon** (`sh-recon`) - build the Graft graph; detect stack/versions; SBOM + CVEs; enumerate entry
    points, trust boundaries, and dangerous sinks.
-3. **Hunt** (`sh-hunter` ×N, parallel) — one hunter per relevant class loads its `sh-kb-*` knowledge base,
+3. **Hunt** (`sh-hunter` ×N, parallel) - one hunter per relevant class loads its `sh-kb-*` knowledge base,
    traces attacker input from source to sink, and records candidates. A shared **attempts ledger** stops
    agents from repeating each other's probes.
-4. **Chain** (`sh-chainer`) — compose findings into higher-severity attack paths.
-5. **Verify** (`sh-verifier`) — refute first, then confirm exploitability from evidence, build PoCs, assign
+4. **Chain** (`sh-chainer`) - compose findings into higher-severity attack paths.
+5. **Verify** (`sh-verifier`) - refute first, then confirm exploitability from evidence, build PoCs, assign
    CVSS, and cut false positives.
-6. **Report** (`sh-reporter`) — produce the deliverables.
+6. **Report** (`sh-reporter`) - produce the deliverables.
 
 Subagents share nothing but files; the contract is in `plugins/security-harness/references/state-files.md`.
 
@@ -146,30 +165,76 @@ and the routing table in `skills/sh-router/SKILL.md`.
 ## Automated knowledge-base updates
 
 A scheduled GitHub Action (`.github/workflows/update-knowledge-base.yml`) keeps the `sh-kb-*` knowledge
-bases fresh. **Every alternate day** (and on manual `workflow_dispatch`), it runs Claude to distill new,
-reputable public security research — OWASP, PortSwigger Research, CWE/CAPEC, NIST, MDN, curated GitHub
-repos, and public HackerOne disclosures — into small, well-sourced improvements. A **second, adversarial
-Claude reviewer** then scans the resulting diff for malicious/injected content, and the PR is
+bases fresh. **Every alternate day** (and on manual `workflow_dispatch`), it runs an agent to distill new,
+reputable public security research - OWASP, PortSwigger Research, CWE/CAPEC, NIST, MDN, curated GitHub
+repos, and public HackerOne disclosures - into small, well-sourced improvements. A **second, adversarial
+reviewer agent** then scans the resulting diff for malicious/injected content, and the PR is
 **auto-merged only if that reviewer approves**.
 
-The pipeline runs in four steps and **always ends in a pull request that a human merges — the bot never
-writes to `main`:**
+### Two workflows, three jobs
 
-1. **Generate** — Claude edits the KB from allowlisted sources.
-2. **Open PR** — a deterministic step opens (or updates) a PR on the `automated/kb-update` branch,
-   labeled `needs-human-review`.
-3. **Review (the "second copilot")** — a *separate* Claude run inspects the diff **adversarially** for
-   prompt-injection artifacts, out-of-scope edits, secrets/exfil, PII, weaponized exploits, or
-   off-allowlist sourcing. It has **no web and no shell**, and **fails closed**: anything suspicious (or
-   any uncertainty) → REJECT.
-4. **Post verdict (advisory)** — the reviewer's verdict is posted as a PR comment and drives the label:
-   `APPROVE` → `reviewer-approved`, `REJECT` (or no verdict) → `needs-human-review`. **Either way the PR
-   stays open for a human to review and merge.** There is no auto-merge and no direct push to `main`.
+PR creation is deliberately separated from review and merge, so the thing that writes
+the diff is never the thing that decides to ship it.
+
+**Stage 1 - [`update-knowledge-base.yml`](.github/workflows/update-knowledge-base.yml)**
+(scheduled or manual). One job, `create-pr`:
+
+1. **Generate** - the agent edits the KB from allowlisted sources. No commit, no push.
+2. **Open PR** - a deterministic step opens (or updates) a PR on the `automated/kb-update`
+   branch, labeled `awaiting-review`.
+3. **Hand off** - on a successful PR creation it dispatches stage 2 with the PR number.
+
+**Stage 2 - [`kb-review-and-merge.yml`](.github/workflows/kb-review-and-merge.yml)**
+(dispatched by stage 1, or run by hand against any automated PR). Two jobs:
+
+- **`review`** - a *separate* agent run inspects the diff **adversarially** for
+  prompt-injection artifacts, out-of-scope edits, secrets/exfil, PII, weaponized
+  exploits, off-allowlist sourcing, or house-style violations. It has **no web and no
+  shell**, and **fails closed**: anything suspicious, any uncertainty, or a missing
+  verdict file → REJECT. The verdict is posted as a PR comment and drives the label.
+- **`merge`** - runs **only** on `APPROVE`, and merges the PR. A `REJECT` skips it and
+  the `blocked` job reports why.
+
+> **Why a dispatch rather than a `pull_request` trigger:** a PR opened by `GITHUB_TOKEN`
+> does not trigger `pull_request` workflows. `workflow_dispatch` is one of the two events
+> exempt from that recursion guard, so stage 1 can hand off reliably.
+
+**Auto-merge means an approving agent lands code in `main`.** The controls on that:
+
+- The merge job refuses any PR that is closed, from a fork, or whose head branch is
+  outside `automated/*` (`ALLOWED_HEAD_PREFIX` in the workflow).
+- It prefers GitHub's own auto-merge, so **branch protection still applies**. With a rule
+  on `main` requiring an approving review, the PR queues and waits for a human instead of
+  merging. It falls back to an immediate merge only on repos where auto-merge is off.
+- Set the `auto_merge` input to `false` on a manual run to review without merging.
+- The reviewer prompt tells the agent its verdict is binding, not advisory.
 
 > Requires the repo setting **"Allow GitHub Actions to create and approve pull requests"** (Settings →
-> Actions → General → Workflow permissions) so the workflow can open the PR. To guarantee nothing ever
-> reaches `main` unreviewed, also protect `main` with a branch-protection rule requiring a pull request and
-> at least one approving review.
+> Actions → General → Workflow permissions) so the workflow can open the PR. If you want a human in the
+> loop despite auto-merge, protect `main` with a branch-protection rule requiring a pull request and at
+> least one approving review - the auto-merge path honours it.
+
+### Pluggable agents
+
+Both stages run through [`.github/actions/ai-agent`](.github/actions/ai-agent/action.yml),
+a composite action that dispatches to whichever agent you configure. Claude Code, OpenAI
+Codex, Gemini CLI, and an escape hatch for anything else:
+
+| `agent` | Runs | Credential |
+|---|---|---|
+| `claude` (default) | `anthropics/claude-code-action@v1` | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` |
+| `codex` | `codex exec --full-auto` | `OPENAI_API_KEY` |
+| `gemini` | `gemini --yolo --prompt` | `GEMINI_API_KEY` |
+| `custom` | your `KB_AGENT_INSTALL` / `KB_AGENT_COMMAND` | whatever it needs |
+
+Pick per run from the `workflow_dispatch` inputs, or set repo variables to change the
+default: `KB_AGENT` and `KB_MODEL` for the generator, `KB_REVIEW_AGENT` and
+`KB_REVIEW_MODEL` for the reviewer. Running the generator and the reviewer on **different
+agents** is a meaningful hardening step: an injection tuned for one model is less likely
+to land on a second, independent one.
+
+For `agent: custom`, set `KB_AGENT_COMMAND` to a shell command. The prompt is written to
+the file named by `$AGENT_PROMPT_FILE`, and `$AGENT_MODEL` carries the model input.
 
 Prompt-injection defenses, since the generator reads the open web:
 
@@ -178,28 +243,34 @@ Prompt-injection defenses, since the generator reads the open web:
   discover URLs, but only allowlisted domains can actually be fetched.
 - **Content is data, not commands.** The task prompt (`.github/kb-update/prompt.md`) instructs Claude to
   treat every fetched byte as untrusted reference material and to ignore any instructions embedded in a
-  page — HackerOne report bodies (user-generated) are flagged as the highest-risk tier.
+  page - HackerOne report bodies (user-generated) are flagged as the highest-risk tier.
 - **No shell, no push on the generator; the reviewer is the gate.** The generator can only edit files.
   The independent reviewer (`.github/kb-update/review-prompt.md`) is what stands between fetched content
-  and `main` — nothing merges without its explicit approval.
+  and `main` - nothing merges without its explicit approval.
+- **Different agents for generator and reviewer.** Optional, and the strongest version of the gate: set
+  `KB_AGENT` and `KB_REVIEW_AGENT` to two different engines.
 
 **Setup:**
 
-- Add a **`CLAUDE_CODE_OAUTH_TOKEN`** repository secret (Settings → Secrets and variables → Actions). This
-  authenticates against **your Claude subscription's usage limits** rather than a metered API key —
-  generate it locally with `claude setup-token` (requires an active Claude Pro/Max subscription) and paste
-  the result. Both the generator and the reviewer draw on this token.
+- Add the credential for whichever agent you use (Settings → Secrets and variables → Actions):
+  **`CLAUDE_CODE_OAUTH_TOKEN`** (default), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY`.
+  The OAuth token authenticates against **your Claude subscription's usage limits** rather than a metered
+  API key - generate it locally with `claude setup-token` (requires an active Claude Pro/Max subscription)
+  and paste the result.
 - Enable **"Allow GitHub Actions to create and approve pull requests"** (Settings → Actions → General →
   Workflow permissions) so the workflow can open its PR. Recommended: add a branch-protection rule on `main`
-  requiring a PR and an approving review, so no automated change can land without a human.
+  requiring a PR and an approving review, so no automated change can land without a human even with
+  auto-merge on.
 - To change which sources are allowed, edit the allowlist in `trusted-sources.md` **and** the matching
-  `WebFetch(domain:...)` entries in the workflow — keep the two in sync.
+  `WebFetch(domain:...)` entries in the workflow - keep the two in sync.
 
 Each run records what it did in `.github/kb-update/last-run-summary.md`.
 
 ## Roadmap
 
-- Codex / Cursor mirror wiring (`.codex-plugin` / `.cursor-plugin`).
+- ~~Codex / Cursor mirror wiring.~~
+  ✅ Shipped: `AGENTS.md`, a Gemini CLI extension, and `scripts/sync-agent-skills.py`
+  for `.agents/skills` and opencode. See [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
 - ~~Optional live-fetch augmentation of knowledge bases (PortSwigger/OWASP/CWE) on top of curated references.~~
   ✅ Shipped as the scheduled knowledge-base updater above.
 - Optional DAST bridge for runtime confirmation of `needs-runtime` findings.
