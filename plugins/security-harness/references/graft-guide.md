@@ -2,12 +2,12 @@
 
 [Graft](https://github.com/NanoNets/Graft) builds a queryable structural graph of a codebase with
 tree-sitter. It is the fast source->sink navigation layer for this harness. It does **not** do
-SBOM/CVE/version detection — recon handles that separately.
+SBOM/CVE/version detection - recon handles that separately.
 
 Verified against **graft 0.12.0**. Structural commands (`build`, `ask`, `grep`, `callers`, `map`,
 `skeleton`, `blast`) cost `$0` and need **no API key**. Only `build --deep` calls an LLM.
 
-## Install & set up (done by the pipeline's Stage 0 — see sh-security-review)
+## Install & set up (done by the pipeline's Stage 0 - see sh-security-review)
 ```
 npm install -g @nanonets/graft        # global install (the flow auto-runs this if graft is missing)
 graft version                          # presence/version check (Stage 0 capability probe)
@@ -16,7 +16,7 @@ graft init <target> --no-agents --no-global   # wire Graft into Claude Code for 
 `graft init` (Claude Code wiring) writes into the **target repo**: `.mcp.json` (registers the `graft` MCP
 server), `.claude/settings.json` + `.claude/helpers/*.cjs` (statusline + freshness hooks), and
 `.claude/skills/graft/SKILL.md`. `--no-global` avoids any writes outside the repo; `--dry-run` previews
-every file first. This is optional convenience — the pipeline itself calls the `graft` **CLI** directly and
+every file first. This is optional convenience - the pipeline itself calls the `graft` **CLI** directly and
 works without MCP wiring. `graft/` (the graph + cache) is added to `.gitignore` automatically on first build.
 
 ### MCP mode (optional)
@@ -49,7 +49,7 @@ graft map <dir> --json                             # directory clusters, hubs, h
 graft blast <dir> --format markdown                # blast radius of a diff (CI/PR comment; Mermaid diagram)
 ```
 Useful flags on the query commands: `--in <path>` narrows to a subtree; `--no-refresh` answers from the
-graph as-is (skip the freshness re-check). `graft ask` returns at most `-n/--limit` hits (default 8) — if it
+graph as-is (skip the freshness re-check). `graft ask` returns at most `-n/--limit` hits (default 8) - if it
 returns few, switch tool (`grep`/`skeleton`/`callers`) rather than re-asking with new wording.
 
 ## Source->sink tracing recipe (the core hunter loop)
@@ -64,7 +64,7 @@ returns few, switch tool (`grep`/`skeleton`/`callers`) rather than re-asking wit
 Example (verified): `grep "execute"` finds the sink in `get_user`; `callers get_user` shows `handler`
 calls it; `handler` reads `request.args.get("id")` -> tainted value reaches `cur.execute("... '%s'" % uid)`.
 
-## Graceful degradation (Graft absent — check capabilities.json)
+## Graceful degradation (Graft absent - check capabilities.json)
 Replace the commands above with native tools:
 - `graft grep "<re>"` -> Grep tool (ripgrep) with the same regex.
 - `graft callers <sym>` -> Grep for call sites of `<sym>`, then read enclosing functions.

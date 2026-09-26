@@ -1,4 +1,4 @@
-# Tooling setup — install missing tools (Stage 0)
+# Tooling setup - install missing tools (Stage 0)
 
 The pipeline works with zero external tools (it degrades to native search + manifest parsing), but each
 tool improves fidelity. Stage 0 **installs the missing ones automatically** using whatever package manager
@@ -7,19 +7,19 @@ is already on the machine. Rules that apply to every install below:
 - **Announce before installing.** State which tool and which command. These change the system.
 - **Prefer no-elevation, user-scope installs.** Use non-interactive flags (`-y`/`--yes`/`--accept-*`).
   Only use a `sudo`/admin method if the platform requires it AND a package manager is already configured for
-  it; never launch an interactive elevation prompt in an automated run — if elevation is required and not
+  it; never launch an interactive elevation prompt in an automated run - if elevation is required and not
   available, skip and mark the tool unavailable.
 - **Never block the run.** If an install fails or no installer is available, record the tool `false` in
   `capabilities.json` with a short `notes` reason and continue. The pipeline handles absence.
 - **Only install what adds a missing capability group** (don't install three CVE scanners):
   - **Codebase map** → `graft` (see graft-guide.md; installed + wired separately in Stage 0 step 4).
   - **SBOM** → `syft`.
-  - **CVEs** → the first of `grype` / `trivy` / `osv-scanner` you can install (prefer **grype** — it consumes
+  - **CVEs** → the first of `grype` / `trivy` / `osv-scanner` you can install (prefer **grype** - it consumes
     syft's SBOM directly). Stop once one is working.
   - **PDF/doc reports** → one PDF engine: prefer `wkhtmltopdf`; `pandoc` also enables `.docx`. Headless
     Chrome (often already present) is a third fallback the reporter can use, so a PDF engine is optional.
 - **Re-check after installing** (`<tool> --version`) and set the capability accordingly. A freshly installed
-  binary may need a new shell / PATH entry — if the version check fails right after install, note it and
+  binary may need a new shell / PATH entry - if the version check fails right after install, note it and
   treat as unavailable for this run.
 
 ## Detect the available package manager first
@@ -32,13 +32,13 @@ checks: any non-zero exit or "not found" means absent.
 | Windows | `winget` → `choco` → `scoop` |
 | macOS | `brew` |
 | Linux | `brew` (if present) → distro pkg mgr (`apt-get`/`dnf`/`apk`, may need sudo) → vendor install script |
-| Any | `npm` (graft), `pipx`/`pip` (python tools), `go install` (Go tools) — when those runtimes exist |
+| Any | `npm` (graft), `pipx`/`pip` (python tools), `go install` (Go tools) - when those runtimes exist |
 
 ## Per-tool install matrix
 
 Run the first command whose manager/runtime is available; fall through on failure.
 
-### graft  (codebase map — see graft-guide.md for the full flow)
+### graft  (codebase map - see graft-guide.md for the full flow)
 ```
 npm install -g @nanonets/graft
 ```
@@ -52,7 +52,7 @@ brew install syft                                                               
 curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "$HOME/.local/bin"   # Linux/macOS, user-scope
 ```
 
-### grype  (CVEs — preferred; pairs with syft SBOM)
+### grype  (CVEs - preferred; pairs with syft SBOM)
 ```
 winget install --id Anchore.Grype -e --accept-source-agreements --accept-package-agreements   # Windows
 choco install grype -y                                                                         # Windows
@@ -61,7 +61,7 @@ brew install grype                                                              
 curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b "$HOME/.local/bin"   # Linux/macOS
 ```
 
-### trivy  (CVEs — fallback if grype unavailable)
+### trivy  (CVEs - fallback if grype unavailable)
 ```
 choco install trivy -y                       # Windows
 scoop install trivy                          # Windows
@@ -69,7 +69,7 @@ brew install trivy                           # macOS/Linux
 curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin"   # Linux/macOS
 ```
 
-### osv-scanner  (CVEs — fallback)
+### osv-scanner  (CVEs - fallback)
 ```
 scoop install osv-scanner                    # Windows
 brew install osv-scanner                     # macOS/Linux
