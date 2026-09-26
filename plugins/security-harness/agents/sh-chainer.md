@@ -26,9 +26,9 @@ end-to-end attack paths and quantify the combined impact.
    - **Path traversal read of config/secrets -> DB creds -> full data access.**
    - **Weak auth + info disclosure -> credential stuffing at scale.**
    Only compose chains whose preconditions are plausible given the actual entry points and trust boundaries
-   in the map — no hypothetical links that the code doesn't support.
+   in the map - no hypothetical links that the code doesn't support.
 4. For each chain, write a block to `chains.md` (format in state-files.md): id, ordered steps referencing
-   finding ids, preconditions, combined_impact, member_findings, and a combined severity (per the rubric —
+   finding ids, preconditions, combined_impact, member_findings, and a combined severity (per the rubric -
    usually one band above the strongest member).
 5. Update `findings.jsonl`: for each member finding, add the chain member ids to its `chained_with[]`.
    Read all lines, patch the relevant objects, write the file back atomically (single write).

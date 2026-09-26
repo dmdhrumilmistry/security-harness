@@ -1,6 +1,7 @@
 {
   "name": "security-harness",
-  "version": "0.1.0",
+  "displayName": "Security Harness",
+  "version": "0.2.0",
   "description": "Multi-agent application-security review harness. A router skill dispatches to a full pipeline (recon -> hunt -> chain -> verify -> report) backed by ~15 per-class vulnerability knowledge skills, using Graft for codebase mapping and SCA tools for SBOM/CVE.",
   "author": {
     "name": "Dhrumil Mistry",
@@ -17,6 +18,13 @@
     "sarif",
     "graft",
     "multi-agent",
-    "vulnerability-review"
-  ]
+    "vulnerability-review",
+    "pentest",
+    "code-review",
+    "security-audit",
+    "sbom",
+    "cve",
+    "dast"
+  ],
+  "repository": "https://github.com/dmdhrumilmistry/security-harness"
 }

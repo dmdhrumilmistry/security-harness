@@ -20,7 +20,7 @@ where dangerous operations happen, so they trace source->sink instead of scannin
 - Server-to-internal-service and server-to-cloud-metadata paths (SSRF risk).
 - Anywhere data crosses from "attacker-influenced" to "trusted" without validation.
 
-## 3. Dangerous sinks (per class — hand these to the matching hunter)
+## 3. Dangerous sinks (per class - hand these to the matching hunter)
 - **sqli**: raw query builders, string-formatted SQL, ORM `.raw()`/`.extra()`.
 - **injection**: `exec`/`system`/`spawn`/`eval`, template `render_string`, LDAP filters, NoSQL `$where`.
 - **path-traversal / file-upload**: `open`/`readFile`/`sendFile`/`os.path.join` with user paths; upload handlers.
@@ -33,7 +33,7 @@ where dangerous operations happen, so they trace source->sink instead of scannin
 - **secrets**: hardcoded keys/passwords/tokens in source and config.
 
 ## 4. Framework-specific defaults to note
-- Auto-escaping templates (Jinja2/React/Rails) — reduces XSS risk except in raw sinks.
-- ORM parameterization defaults — reduces SQLi except in raw APIs.
-- Built-in CSRF protection (Django, Rails, Spring Security) — note if disabled.
+- Auto-escaping templates (Jinja2/React/Rails) - reduces XSS risk except in raw sinks.
+- ORM parameterization defaults - reduces SQLi except in raw APIs.
+- Built-in CSRF protection (Django, Rails, Spring Security) - note if disabled.
 Record these in `recon.md` so hunters calibrate false positives.
