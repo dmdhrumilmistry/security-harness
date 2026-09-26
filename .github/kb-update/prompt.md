@@ -66,3 +66,10 @@ At the end, write a short markdown summary to `.github/kb-update/last-run-summar
 - If you made no KB changes, state that and why.
 
 Keep the whole run focused and small. Quality and trustworthiness over volume.
+
+## Efficiency
+
+- Work within roughly 80 tool calls in total. Plan the classes and sources first, then fetch.
+- If a fetch is **denied**, the domain is off the allowlist. Don't retry it and don't try variants of the
+  URL. Move on to an allowlisted source (Tier 1 first).
+- Prefer a few in-depth pages (an OWASP cheat sheet, a PortSwigger topic page) over many shallow fetches.
