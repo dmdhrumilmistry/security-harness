@@ -37,6 +37,14 @@ Non-atomic sequences: a SELECT/read followed by an UPDATE/write of the same fiel
   `used=true`, so all N succeed." Show the non-atomic code path.
 - Practical PoC: fire many concurrent identical requests (e.g. 20-50 in parallel) and observe the invariant
   broken (balance negative, coupon used twice). Often `needs-runtime` to fully confirm.
+- **Tightening the race window**: naive parallel requests over separate TCP connections suffer network
+  jitter that can hide a narrow window. Over HTTP/2, a "single-packet attack" (send 20-30 request streams
+  in one TCP packet so the server receives them effectively simultaneously) removes that jitter; over
+  HTTP/1.1 a "last-byte sync" (send all but the final byte of each request, then release the final bytes
+  together) achieves the same effect. Tools: Burp Repeater's parallel "group" send, or Turbo Intruder
+  (`engine=Engine.BURP2`, `concurrentConnections=1`). When racing **multiple different endpoints** (e.g.
+  check-balance vs. spend), pre-warm each connection with a throwaway request first so backend processing
+  times align, since cross-endpoint timing skew is a common reason an otherwise-real race fails to trigger.
 
 ## False-positive filters
 - The critical section is atomic: single `UPDATE ... SET x=x-1 WHERE x>0` (check in the WHERE), DB unique
