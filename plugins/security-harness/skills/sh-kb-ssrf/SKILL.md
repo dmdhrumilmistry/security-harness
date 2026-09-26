@@ -37,12 +37,21 @@ filenames that become URLs, hostnames in config uploaded by users.
 - Bypasses: `http://0/`, `http://0177.0.0.1`, `http://2130706433` (decimal IP), `http://127.0.0.1.nip.io`,
   redirect chains (allowed host 302s to internal), DNS rebinding, `http://[::]`, `http://[::ffff:127.0.0.1]`.
 - Non-HTTP schemes: `file://`, `gopher://` (craft raw TCP to Redis/SMTP), `dict://`, `ftp://`.
+- **URL-parser confusion** (differential parsing, per Orange Tsai's research): if the validator and the
+  actual HTTP client parse the URL with different libraries/standards, craft a URL both parse differently —
+  e.g. `http://expected-host\@evil.com` (backslash before `@`): WHATWG-URL-based parsers normalize `\` to
+  `/` and treat `evil.com` as the host, while an RFC-3986-only parser may read `expected-host` as the
+  userinfo host. Also test embedded credentials (`http://expected-host@evil.com`), `http://evil.com#@expected-host`,
+  and mixed-case/percent-encoded hosts if the validator and the fetch call use different URL parsers.
 - PoC: point the fetcher at a collaborator/attacker host and confirm the server connects (out-of-band).
 
 ## False-positive filters
 - Destination is a hardcoded/allowlisted host or a fixed base URL with only a path from the user.
 - A real SSRF guard runs: scheme allowlist (`https` only) **and** resolved-IP range check **after** DNS
   resolution, with redirects disabled or re-validated (validating the string before resolving is bypassable).
+- The validation step and the fetch step use the **same** URL-parsing library/call to extract the host (no
+  parser-confusion gap) — if they differ (e.g. a regex/manual parse for the allowlist check vs. the
+  language's URL/HTTP-client parser for the actual request), still flag even with an allowlist present.
 - Egress is network-restricted to specific hosts (note as mitigation, still flag if the code guard is absent).
 
 ## CWE / OWASP / severity

