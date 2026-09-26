@@ -60,11 +60,13 @@ jobs:
             .github/kb-update/trusted-sources.md for the domain allowlist. Make small,
             high-signal, well-sourced improvements to the sh-kb-* knowledge bases and
             write .github/kb-update/last-run-summary.md. Do not commit or push.
+          # Turn cap is generous: a successful run that exceeds it is reported as a failure
+          # and its edits are discarded (run #5 finished in 67 turns against a cap of 60).
           # Tool allowlist = the security boundary. No Bash (no shell). WebFetch is
           # scoped to trusted domains ONLY; WebSearch may discover URLs but off-list
           # domains cannot be fetched. Keep this list identical to trusted-sources.md.
           claude_args: |
-            --max-turns 60 --allowedTools "Read,Edit,Write,Glob,Grep,WebSearch,WebFetch(domain:owasp.org),WebFetch(domain:cheatsheetseries.owasp.org),WebFetch(domain:cwe.mitre.org),WebFetch(domain:capec.mitre.org),WebFetch(domain:nvd.nist.gov),WebFetch(domain:csrc.nist.gov),WebFetch(domain:developer.mozilla.org),WebFetch(domain:portswigger.net),WebFetch(domain:googleprojectzero.blogspot.com),WebFetch(domain:github.blog),WebFetch(domain:github.com),WebFetch(domain:raw.githubusercontent.com),WebFetch(domain:hackerone.com)"
+            --max-turns 120 --allowedTools "Read,Edit,Write,Glob,Grep,WebSearch,WebFetch(domain:owasp.org),WebFetch(domain:cheatsheetseries.owasp.org),WebFetch(domain:cwe.mitre.org),WebFetch(domain:capec.mitre.org),WebFetch(domain:nvd.nist.gov),WebFetch(domain:csrc.nist.gov),WebFetch(domain:developer.mozilla.org),WebFetch(domain:portswigger.net),WebFetch(domain:googleprojectzero.blogspot.com),WebFetch(domain:github.blog),WebFetch(domain:github.com),WebFetch(domain:raw.githubusercontent.com),WebFetch(domain:hackerone.com)"
 
       # 2) Did anything change?
       - name: Detect changes
