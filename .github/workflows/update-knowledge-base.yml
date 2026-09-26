@@ -131,6 +131,9 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The claude-code-action steps strip actions/checkout's persisted git
+          # credentials, so push with an explicit token URL (GH_TOKEN is masked in logs).
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           # Re-stage in case the reviewer step disturbed the index; the reviewer only
           # writes its verdict outside the repo, so this stages just the KB changes.
           git add -A
@@ -140,7 +143,7 @@ jobs:
               -m "chore(kb): automated knowledge-base refresh" \
               -m "Reviewed by the malicious-input gate: APPROVE." \
               -m "Run: $RUN_URL"
-            git push origin HEAD:main
+            git push "$REMOTE" HEAD:main
             echo "✅ Reviewer APPROVED — changes pushed to main."
           else
             BRANCH="automated/kb-update-${GITHUB_RUN_ID}"
@@ -148,7 +151,7 @@ jobs:
               -m "chore(kb): automated knowledge-base refresh (needs human review)" \
               -m "Reviewed by the malicious-input gate: REJECT." \
               -m "Run: $RUN_URL"
-            git push origin "HEAD:${BRANCH}"
+            git push "$REMOTE" "HEAD:${BRANCH}"
             COMPARE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1"
             gh label create "needs-human-review" --color B60205 \
               --description "Automated KB update flagged by the malicious-input reviewer" 2>/dev/null || true
