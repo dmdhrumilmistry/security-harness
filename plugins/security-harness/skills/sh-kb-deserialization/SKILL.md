@@ -1,9 +1,9 @@
 ---
 name: sh-kb-deserialization
-description: "Knowledge base for finding insecure deserialization — untrusted data fed to object-deserialization APIs that can trigger RCE or object injection via gadget chains. Use when hunting deserialization issues. CWE-502, OWASP A08:2021-Software and Data Integrity Failures."
+description: "Knowledge base for finding insecure deserialization - untrusted data fed to object-deserialization APIs that can trigger RCE or object injection via gadget chains. Use when hunting deserialization issues. CWE-502, OWASP A08:2021-Software and Data Integrity Failures."
 ---
 
-# Insecure Deserialization — Hunter Knowledge Base
+# Insecure Deserialization - Hunter Knowledge Base
 
 Deserializing attacker-controlled bytes into live objects can execute code during reconstruction (magic
 methods / gadget chains) or corrupt application state. Confirmed native-object deserialization of untrusted
@@ -27,9 +27,9 @@ input is typically critical (RCE).
 3. Check for a safe variant (see filters). If the raw/native deserializer processes untrusted bytes, flag.
 
 ## Payloads / PoC
-- Python pickle: a class with `__reduce__` returning `(os.system, ('id',))` — describe the gadget; do not
+- Python pickle: a class with `__reduce__` returning `(os.system, ('id',))` - describe the gadget; do not
   ship a live malicious blob.
-- Java: reference `ysoserial` gadget families (CommonsCollections, etc.) conceptually — the PoC is that the
+- Java: reference `ysoserial` gadget families (CommonsCollections, etc.) conceptually - the PoC is that the
   endpoint deserializes attacker bytes with vulnerable classpath gadgets present.
 - PHP: craft a serialized object of a class with a dangerous `__destruct`/`__wakeup` (POP chain).
 - Detection without RCE: send a malformed/DoS payload or an object of an unexpected type and observe

@@ -1,9 +1,9 @@
 ---
 name: sh-kb-path-traversal
-description: "Knowledge base for finding path/directory traversal and local/remote file inclusion — user-controlled paths reaching filesystem or include operations, enabling arbitrary file read/write or code inclusion. Use when hunting traversal/LFI/RFI. CWE-22/23/98, OWASP A01:2021-Broken Access Control."
+description: "Knowledge base for finding path/directory traversal and local/remote file inclusion - user-controlled paths reaching filesystem or include operations, enabling arbitrary file read/write or code inclusion. Use when hunting traversal/LFI/RFI. CWE-22/23/98, OWASP A01:2021-Broken Access Control."
 ---
 
-# Path Traversal & File Inclusion — Hunter Knowledge Base
+# Path Traversal & File Inclusion - Hunter Knowledge Base
 
 User-controlled path components reach a filesystem operation without being confined to an intended base
 directory, letting an attacker read/write files outside it (`../../etc/passwd`) or include/execute files.

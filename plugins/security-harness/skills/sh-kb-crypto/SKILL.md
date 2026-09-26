@@ -1,9 +1,9 @@
 ---
 name: sh-kb-crypto
-description: "Knowledge base for finding cryptographic failures — weak hashing/encryption, insecure randomness, hardcoded/static keys and IVs, ECB mode, missing integrity, and predictable tokens. Use when hunting crypto misuse. CWE-327/328/330/326/916, OWASP A02:2021-Cryptographic Failures."
+description: "Knowledge base for finding cryptographic failures - weak hashing/encryption, insecure randomness, hardcoded/static keys and IVs, ECB mode, missing integrity, and predictable tokens. Use when hunting crypto misuse. CWE-327/328/330/326/916, OWASP A02:2021-Cryptographic Failures."
 ---
 
-# Cryptographic Failures — Hunter Knowledge Base
+# Cryptographic Failures - Hunter Knowledge Base
 
 Broken or misused cryptography: weak algorithms, predictable randomness, static keys/IVs, missing
 integrity, or protecting nothing (plaintext). Impact depends on what the crypto was meant to protect.
@@ -38,7 +38,7 @@ Look near "password", "token", "key", "encrypt", "sign", "session".
 - Padding oracle / ECB: describe the exploit conditions; a full oracle PoC is usually `needs-runtime`.
 
 ## False-positive filters
-- MD5/SHA1 used for **non-security** purposes (ETags, cache keys, dedup checksums) — not a finding.
+- MD5/SHA1 used for **non-security** purposes (ETags, cache keys, dedup checksums) - not a finding.
 - CSPRNG in use: `secrets`/`os.urandom` (Python), `crypto.randomBytes` (Node), `SecureRandom` (Java),
   `crypto/rand` (Go). Password hashing via argon2/bcrypt/scrypt with salt.
 - AEAD (AES-GCM/ChaCha20-Poly1305) or encrypt-then-MAC; per-message random IV/nonce; keys from a KMS/secret

@@ -1,9 +1,9 @@
 ---
 name: sh-kb-secrets
-description: "Knowledge base for finding hardcoded secrets and sensitive-data exposure — API keys, passwords, tokens, private keys, and connection strings embedded in source/config, or secrets leaked to logs/errors/URLs. Use when hunting secret exposure. CWE-798/259/312/532, OWASP A05/A02:2021."
+description: "Knowledge base for finding hardcoded secrets and sensitive-data exposure - API keys, passwords, tokens, private keys, and connection strings embedded in source/config, or secrets leaked to logs/errors/URLs. Use when hunting secret exposure. CWE-798/259/312/532, OWASP A05/A02:2021."
 ---
 
-# Hardcoded Secrets & Sensitive Exposure — Hunter Knowledge Base
+# Hardcoded Secrets & Sensitive Exposure - Hunter Knowledge Base
 
 Credentials embedded in code/config or leaked through logs, errors, or client-visible responses. High
 value: a single leaked key can defeat every other control.
@@ -35,14 +35,14 @@ value: a single leaked key can defeat every other control.
 
 ## PoC / evidence
 - The literal at `file:line` (mask the value in the report: `AKIA****`). For a live key, the "PoC" is
-  demonstrating it authenticates — describe rather than actually using third-party creds without authorization.
+  demonstrating it authenticates - describe rather than actually using third-party creds without authorization.
 - For log leak: show the code path where the secret enters the log/response.
 
 ## False-positive filters
 - Placeholders/examples/test fixtures/`*.example`; obviously fake values.
 - Values loaded from env/secret managers/vault (`os.environ`, `process.env`, AWS Secrets Manager, Vault, KMS).
 - Public/publishable keys meant to be client-side (Stripe publishable `pk_`, OAuth client_id, public certs).
-- Non-secret high-entropy strings (UUIDs, hashes of public data) — confirm meaning before flagging.
+- Non-secret high-entropy strings (UUIDs, hashes of public data) - confirm meaning before flagging.
 
 ## CWE / OWASP / severity
 CWE-798/259 (hardcoded creds), CWE-312 (cleartext storage), CWE-532 (log exposure), CWE-522. OWASP

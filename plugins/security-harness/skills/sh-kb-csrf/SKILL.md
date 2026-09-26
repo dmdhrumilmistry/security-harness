@@ -1,9 +1,9 @@
 ---
 name: sh-kb-csrf
-description: "Knowledge base for finding Cross-Site Request Forgery — state-changing requests that rely only on ambient credentials (cookies) with no anti-CSRF token or SameSite protection. Use when hunting CSRF. CWE-352, OWASP A01:2021-Broken Access Control."
+description: "Knowledge base for finding Cross-Site Request Forgery - state-changing requests that rely only on ambient credentials (cookies) with no anti-CSRF token or SameSite protection. Use when hunting CSRF. CWE-352, OWASP A01:2021-Broken Access Control."
 ---
 
-# Cross-Site Request Forgery (CSRF) — Hunter Knowledge Base
+# Cross-Site Request Forgery (CSRF) - Hunter Knowledge Base
 
 A logged-in victim's browser is tricked into sending a state-changing request; the app trusts the ambient
 cookie and performs the action as the victim. Requires cookie-based auth and a missing anti-CSRF control.
@@ -11,7 +11,7 @@ cookie and performs the action as the victim. Requires cookie-based auth and a m
 ## Preconditions to confirm first
 1. The endpoint performs a **state change** (create/update/delete/transfer/settings).
 2. Auth is via **ambient credentials** (session cookie / HTTP Basic), not a per-request header token that
-   JS must attach (`Authorization: Bearer`) — pure Bearer-in-header APIs are generally not CSRF-able.
+   JS must attach (`Authorization: Bearer`) - pure Bearer-in-header APIs are generally not CSRF-able.
 3. There is **no** effective anti-CSRF defense on that route.
 
 ## Sinks / patterns (grep targets)
@@ -38,7 +38,7 @@ State-changing route handlers (`POST`/`PUT`/`PATCH`/`DELETE`, or `GET` that muta
 
 ## False-positive filters
 - Anti-CSRF token required and validated (synchronizer token, double-submit cookie) on the route.
-- `SameSite=Lax` (default in modern browsers) or `Strict` on the session cookie — mitigates most CSRF;
+- `SameSite=Lax` (default in modern browsers) or `Strict` on the session cookie - mitigates most CSRF;
   note residual risk for top-level GET navigations under Lax.
 - Auth is a header token the browser won't auto-attach cross-site (Bearer), not a cookie.
 - Endpoint requires a custom header (forces CORS preflight) and CORS is not permissive.

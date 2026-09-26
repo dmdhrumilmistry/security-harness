@@ -3,10 +3,10 @@ name: sh-kb-sqli
 description: "Knowledge base for finding SQL injection (and query-language injection). Use when hunting SQLi, or when a hunter/reviewer needs sources, sinks, detection queries, payloads, false-positive filters, and remediation for injection into SQL/ORM raw queries. CWE-89, OWASP A03:2021-Injection."
 ---
 
-# SQL Injection — Hunter Knowledge Base
+# SQL Injection - Hunter Knowledge Base
 
 SQLi happens when attacker-controlled input is placed into a SQL statement as **code** rather than
-**data** — typically string concatenation/interpolation into a query instead of a bound parameter.
+**data** - typically string concatenation/interpolation into a query instead of a bound parameter.
 
 ## When to hunt this
 - Any code that builds SQL from variables: string concatenation, f-strings/template literals, `%`/`+`/`.format`.

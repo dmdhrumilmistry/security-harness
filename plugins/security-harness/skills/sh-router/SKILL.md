@@ -1,13 +1,13 @@
 ---
 name: sh-router
-description: "Entry point / dispatcher for the security-harness. Use when the user asks for any application-security work — 'security review', 'audit this codebase', 'pentest', 'find vulnerabilities', 'check for SQLi/XSS/IDOR/SSRF', 'generate a security report/SARIF'. Interprets the request and routes it to the full sh-security-review pipeline, a single stage, or a single vulnerability-class knowledge base."
-argument-hint: "[what to do — e.g. 'full security review of ./api' or 'find SQLi and IDOR in src/']"
+description: "Entry point / dispatcher for the security-harness. Use when the user asks for any application-security work - 'security review', 'audit this codebase', 'pentest', 'find vulnerabilities', 'check for SQLi/XSS/IDOR/SSRF', 'generate a security report/SARIF'. Interprets the request and routes it to the full sh-security-review pipeline, a single stage, or a single vulnerability-class knowledge base."
+argument-hint: "[what to do - e.g. 'full security review of ./api' or 'find SQLi and IDOR in src/']"
 ---
 
-# Security Harness — Router
+# Security Harness - Router
 
 You are the front door. Read the user's request, decide the smallest flow that satisfies it, and hand off.
-Prefer routing over doing the work inline — the specialized skills/agents carry the knowledge and contracts.
+Prefer routing over doing the work inline - the specialized skills/agents carry the knowledge and contracts.
 
 ## Routing table
 
@@ -52,7 +52,7 @@ Prefer routing over doing the work inline — the specialized skills/agents carr
 ## Notes
 - **Model / cost control**: `sh-security-review` runs each stage on a cost-appropriate model by default
   (recon=sonnet, hunt=tiered haiku/sonnet/opus per class, chain/verify=opus, report=haiku). Users can
-  override with `models:` (e.g. `models:max`, `models:cheap`, `models:verify=opus,hunt=sonnet`) — pass these
+  override with `models:` (e.g. `models:max`, `models:cheap`, `models:verify=opus,hunt=sonnet`) - pass these
   through unchanged.
 - The pipeline writes everything under `<target>/.security-harness/<run-id>/`; point the user there.
 - If the user asks something outside security review (general coding), say this harness is scoped to

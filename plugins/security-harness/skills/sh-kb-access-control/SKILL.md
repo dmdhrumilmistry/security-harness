@@ -1,13 +1,13 @@
 ---
 name: sh-kb-access-control
-description: "Knowledge base for finding broken access control — IDOR/BOLA, missing function-level authorization, privilege escalation, and multi-tenant isolation failures. Use when hunting authorization issues or reviewing whether users can access resources/actions they shouldn't. CWE-284/285/639/862/863, OWASP A01:2021-Broken Access Control."
+description: "Knowledge base for finding broken access control - IDOR/BOLA, missing function-level authorization, privilege escalation, and multi-tenant isolation failures. Use when hunting authorization issues or reviewing whether users can access resources/actions they shouldn't. CWE-284/285/639/862/863, OWASP A01:2021-Broken Access Control."
 ---
 
-# Broken Access Control — Hunter Knowledge Base
+# Broken Access Control - Hunter Knowledge Base
 
 The #1 OWASP risk. The app authenticates the user but fails to check whether *this* user may access
 *this* resource or perform *this* action. Unlike injection, the bug is usually a **missing or wrong
-check**, not a dangerous sink — so hunt by comparing "who can reach this" against "who should".
+check**, not a dangerous sink - so hunt by comparing "who can reach this" against "who should".
 
 ## Sub-classes
 - **IDOR / BOLA** (object-level): `/api/orders/{id}` returns any order because the handler looks up by id
@@ -18,7 +18,7 @@ check**, not a dangerous sink — so hunt by comparing "who can reach this" agai
   or a lower role reaches a higher-role action.
 - **Multi-tenant isolation**: queries not scoped by `tenant_id`/`org_id`; one tenant reads another's data.
 - **URL-matching / verb bypass**: the authz check binds to one HTTP method or exact path while the route
-  handler accepts more — e.g. `POST /admin/deleteUser` is checked but `GET`/`PUT` on the same handler isn't;
+  handler accepts more - e.g. `POST /admin/deleteUser` is checked but `GET`/`PUT` on the same handler isn't;
   a reverse proxy/framework treats `/ADMIN/deleteUser` (case), `/admin/deleteUser/` (trailing slash), or
   `/admin/deleteUser.anything` (suffix, e.g. Spring's pre-5.3 default `useSuffixPatternMatch`) as a different
   route than the one the gate matches on, but the underlying handler still resolves it. Non-standard
@@ -49,7 +49,7 @@ or a **capability** (action, role, flag). For each entry point in `codebase-map.
 ## Detection recipe
 1. From `codebase-map.json`, list every entry point and its `auth_required`.
 2. For each resource-fetching handler, `graft ask "does this handler check that the resource belongs to
-   the current user"` (or read it) — look for a comparison against the authenticated principal.
+   the current user"` (or read it) - look for a comparison against the authenticated principal.
 3. Diff sibling endpoints: if `GET /doc/{id}` checks ownership but `DELETE /doc/{id}` doesn't, flag it. Also
    diff the methods/paths the **authz gate** matches against what the **router/handler** actually accepts
    (other verbs, case variants, trailing slash, suffix, `X-Original-URL`/`X-Rewrite-URL` handling).
@@ -76,11 +76,11 @@ or a **capability** (action, role, flag). For each entry point in `codebase-map.
 - Ownership/tenant enforced in a **query scope** (`WHERE owner_id = :me`), a base queryset
   (`get_queryset` filtered by user), row-level security, or shared middleware you must read to see.
 - Central authorization layer (policy objects, Pundit/CanCan, Spring Security matchers, a gateway) applied
-  before the handler — confirm the resource is actually covered by it, and that the gate's path/method
+  before the handler - confirm the resource is actually covered by it, and that the gate's path/method
   matching is as permissive as the router's (same case/trailing-slash/suffix handling, all methods covered).
 - The identifier is not attacker-controlled (server-derived from session).
-- Resource is intentionally public (read-only, non-sensitive) — confirm via intent, don't assume.
-- Not a filter — flag it: an access check based only on the `Referer` header (fully attacker-controlled) is
+- Resource is intentionally public (read-only, non-sensitive) - confirm via intent, don't assume.
+- Not a filter - flag it: an access check based only on the `Referer` header (fully attacker-controlled) is
   not a real control, even though it looks like a check is present.
 
 ## CWE / OWASP / severity

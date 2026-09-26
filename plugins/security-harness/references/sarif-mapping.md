@@ -9,7 +9,7 @@ the caller asked for an unverified scan).
 |---|---|
 | `class` | `ruleId` = `SH-<CLASS-UPPER>`; add/reuse a matching entry in `tool.driver.rules[]` |
 | `severity` | `level`: critical/high -> `error`, medium -> `warning`, low/info -> `note` |
-| `cvss.score` (or mapped severity) | `properties["security-severity"]` (string, "0.0"-"10.0") — GitHub code-scanning reads this |
+| `cvss.score` (or mapped severity) | `properties["security-severity"]` (string, "0.0"-"10.0") - GitHub code-scanning reads this |
 | `title` + `why_it_matters` | `message.text` |
 | `file` / `line` | `locations[0].physicalLocation.artifactLocation.uri` / `region.startLine` |
 | `data_flow[]` | `codeFlows[0].threadFlows[0].locations[]` (one threadFlowLocation per hop) |

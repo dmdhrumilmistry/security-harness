@@ -1,9 +1,9 @@
 ---
 name: sh-kb-file-upload
-description: "Knowledge base for finding unrestricted/insecure file upload — uploads that allow dangerous file types, execution in the upload dir, path control over the stored name, or missing content validation, leading to RCE, XSS, or overwrite. Use when hunting file-upload issues. CWE-434/436/616, OWASP A04/A05:2021."
+description: "Knowledge base for finding unrestricted/insecure file upload - uploads that allow dangerous file types, execution in the upload dir, path control over the stored name, or missing content validation, leading to RCE, XSS, or overwrite. Use when hunting file-upload issues. CWE-434/436/616, OWASP A04/A05:2021."
 ---
 
-# Unrestricted File Upload — Hunter Knowledge Base
+# Unrestricted File Upload - Hunter Knowledge Base
 
 Uploads become dangerous when the app trusts the client-provided type/name, stores files where they can be
 executed or served, or skips content validation. Worst case: upload a web shell and get RCE.
@@ -18,7 +18,7 @@ executed or served, or skips content validation. Worst case: upload a web shell 
   Alternate Data Stream `shell.asp:.jpg`, or a name like `shell.p.phphp` that becomes `shell.php` after a
   single-pass, non-recursive strip of a blacklisted extension).
 - **Upload-then-validate race window**: the app writes the file to a web-reachable path first and deletes
-  it afterward if validation fails — an attacker who requests the file fast enough (or repeatedly re-uploads
+  it afterward if validation fails - an attacker who requests the file fast enough (or repeatedly re-uploads
   to widen the window) can get it executed before it's removed.
 - **Content-driven XSS / SVG / HTML / polyglot**: uploading `.svg`/`.html` served inline on the app origin
   -> stored XSS; image polyglots; `.xml`-backed formats -> XXE.
@@ -28,7 +28,7 @@ executed or served, or skips content validation. Worst case: upload a web shell 
 ## Sinks / patterns (grep targets)
 Upload handlers and where they write: `request.files`, `MultipartFile`, `multer`, `formidable`,
 `move_uploaded_file`, `save(`/`saveAs(`, `fs.writeFile(uploadPath)`, `os.path.join(upload_dir, filename)`,
-`secure_filename` (Flask — check it's actually used), `Content-Type` checks, extension allowlist/denylist.
+`secure_filename` (Flask - check it's actually used), `Content-Type` checks, extension allowlist/denylist.
 Also how the file is later **served** (static route over the upload dir) or **processed** (image libs).
 
 ## Detection recipe

@@ -1,9 +1,9 @@
 ---
 name: sh-kb-auth
-description: "Knowledge base for finding authentication and session-management failures — weak login, broken JWT/session handling, password/reset flaws, MFA bypass, credential storage issues. Use when hunting authentication (not authorization — see sh-kb-access-control). CWE-287/384/613/620/640, OWASP A07:2021-Identification and Authentication Failures."
+description: "Knowledge base for finding authentication and session-management failures - weak login, broken JWT/session handling, password/reset flaws, MFA bypass, credential storage issues. Use when hunting authentication (not authorization - see sh-kb-access-control). CWE-287/384/613/620/640, OWASP A07:2021-Identification and Authentication Failures."
 ---
 
-# Authentication & Session — Hunter Knowledge Base
+# Authentication & Session - Hunter Knowledge Base
 
 Failures in proving *who* the user is (vs `access-control`, which is *what* they may do). Covers login,
 sessions, tokens, password handling, and account recovery.

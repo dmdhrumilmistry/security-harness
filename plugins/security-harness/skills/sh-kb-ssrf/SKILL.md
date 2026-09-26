@@ -1,9 +1,9 @@
 ---
 name: sh-kb-ssrf
-description: "Knowledge base for finding Server-Side Request Forgery — when the server makes outbound requests to attacker-controlled destinations. Use when hunting SSRF or reviewing URL/host inputs that reach HTTP/network clients. CWE-918, OWASP A10:2021-SSRF."
+description: "Knowledge base for finding Server-Side Request Forgery - when the server makes outbound requests to attacker-controlled destinations. Use when hunting SSRF or reviewing URL/host inputs that reach HTTP/network clients. CWE-918, OWASP A10:2021-SSRF."
 ---
 
-# Server-Side Request Forgery (SSRF) — Hunter Knowledge Base
+# Server-Side Request Forgery (SSRF) - Hunter Knowledge Base
 
 The server fetches a URL the attacker controls, letting them reach internal services, cloud metadata, or
 the loopback interface from the server's trusted position.
@@ -38,7 +38,7 @@ filenames that become URLs, hostnames in config uploaded by users.
   redirect chains (allowed host 302s to internal), DNS rebinding, `http://[::]`, `http://[::ffff:127.0.0.1]`.
 - Non-HTTP schemes: `file://`, `gopher://` (craft raw TCP to Redis/SMTP), `dict://`, `ftp://`.
 - **URL-parser confusion** (differential parsing, per Orange Tsai's research): if the validator and the
-  actual HTTP client parse the URL with different libraries/standards, craft a URL both parse differently —
+  actual HTTP client parse the URL with different libraries/standards, craft a URL both parse differently -
   e.g. `http://expected-host\@evil.com` (backslash before `@`): WHATWG-URL-based parsers normalize `\` to
   `/` and treat `evil.com` as the host, while an RFC-3986-only parser may read `expected-host` as the
   userinfo host. Also test embedded credentials (`http://expected-host@evil.com`), `http://evil.com#@expected-host`,
@@ -50,7 +50,7 @@ filenames that become URLs, hostnames in config uploaded by users.
 - A real SSRF guard runs: scheme allowlist (`https` only) **and** resolved-IP range check **after** DNS
   resolution, with redirects disabled or re-validated (validating the string before resolving is bypassable).
 - The validation step and the fetch step use the **same** URL-parsing library/call to extract the host (no
-  parser-confusion gap) — if they differ (e.g. a regex/manual parse for the allowlist check vs. the
+  parser-confusion gap) - if they differ (e.g. a regex/manual parse for the allowlist check vs. the
   language's URL/HTTP-client parser for the actual request), still flag even with an allowlist present.
 - Egress is network-restricted to specific hosts (note as mitigation, still flag if the code guard is absent).
 
