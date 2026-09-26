@@ -1,0 +1,254 @@
+name: KB Review and Merge
+
+# STAGE 2 of 2. Dispatched by `update-knowledge-base.yml` immediately after it
+# raises a PR successfully, and runnable by hand against any automated PR.
+#
+# Two separate jobs:
+#   review - an adversarial agent reads the full diff and returns APPROVE / REJECT.
+#   merge  - runs only on APPROVE, and merges the PR.
+#
+# Why workflow_dispatch and not `pull_request`: a PR opened by GITHUB_TOKEN does not
+# trigger `pull_request` workflows. `workflow_dispatch` is explicitly exempt from that
+# recursion guard, so stage 1 can hand off reliably.
+#
+# The reviewer's verdict gates a real merge, so the guard step below refuses to run on
+# anything that is not an open, same-repo, automated PR.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to review and merge"
+        required: true
+        type: string
+      agent:
+        description: "Agent that reviews the diff"
+        required: false
+        default: "claude"
+        type: choice
+        options: [claude, codex, gemini, custom]
+      model:
+        description: "Model override for the reviewer (blank = agent default)"
+        required: false
+        default: ""
+        type: string
+      auto_merge:
+        description: "Merge automatically on an APPROVE verdict"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: kb-review-${{ inputs.pr }}
+  cancel-in-progress: false
+
+env:
+  # Only PRs whose head branch starts with this prefix may be auto-merged. This is
+  # the main blast-radius control on a workflow that merges code.
+  ALLOWED_HEAD_PREFIX: automated/
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # JOB 1: adversarial review of the diff.
+  # ---------------------------------------------------------------------------
+  review:
+    name: Review diff for malicious input
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      verdict: ${{ steps.gate.outputs.verdict }}
+      head_ref: ${{ steps.guard.outputs.head_ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Refuse anything that is not an open, same-repo, automated PR. A fork PR would
+      # mean running an agent over untrusted code with a write-scoped token.
+      - name: Guard PR
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          META="$(gh pr view "$PR" --json headRefName,baseRefName,state,isCrossRepository,author)"
+          HEAD_REF="$(echo "$META" | jq -r .headRefName)"
+          STATE="$(echo "$META" | jq -r .state)"
+          CROSS="$(echo "$META" | jq -r .isCrossRepository)"
+          AUTHOR="$(echo "$META" | jq -r .author.login)"
+          echo "PR #$PR  head=$HEAD_REF  state=$STATE  fork=$CROSS  author=$AUTHOR"
+
+          if [ "$STATE" != "OPEN" ]; then
+            echo "::error::PR #$PR is $STATE, not OPEN."
+            exit 1
+          fi
+          if [ "$CROSS" != "false" ]; then
+            echo "::error::PR #$PR comes from a fork. Refusing to review or merge it."
+            exit 1
+          fi
+          case "$HEAD_REF" in
+            "$ALLOWED_HEAD_PREFIX"*) ;;
+            *)
+              echo "::error::PR #$PR head '$HEAD_REF' is outside '$ALLOWED_HEAD_PREFIX*'. Refusing."
+              exit 1
+              ;;
+          esac
+          echo "head_ref=$HEAD_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare review context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          gh pr checkout "$PR"
+          git fetch --quiet origin main
+          git diff origin/main...HEAD > "$RUNNER_TEMP/pr.diff"
+          echo "Wrote diff ($(wc -l < "$RUNNER_TEMP/pr.diff") lines)."
+          git diff --stat origin/main...HEAD || true
+
+      # REVIEWER: read-only inspection plus one verdict file. No web, no shell.
+      # `continue-on-error` so that an agent crash still reaches the fail-closed gate
+      # below rather than leaving the PR in limbo.
+      - name: Run reviewer agent
+        continue-on-error: true
+        uses: ./.github/actions/ai-agent
+        with:
+          agent: ${{ inputs.agent || vars.KB_REVIEW_AGENT || 'claude' }}
+          model: ${{ inputs.model || vars.KB_REVIEW_MODEL || '' }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          custom_install: ${{ vars.KB_AGENT_INSTALL }}
+          custom_command: ${{ vars.KB_REVIEW_AGENT_COMMAND || vars.KB_AGENT_COMMAND }}
+          max_turns: "30"
+          allowed_tools: "Read,Grep,Glob,Write"
+          prompt: |
+            Read .github/kb-update/review-prompt.md and follow it exactly. You are the
+            malicious-input reviewer for this automated knowledge-base PR. The complete
+            proposed diff is at DIFF_FILE = ${{ runner.temp }}/pr.diff, and the full
+            proposed files are in the current working tree - read both. Write your verdict
+            to VERDICT_FILE = ${{ runner.temp }}/verdict.txt (first line exactly
+            "VERDICT: APPROVE" or "VERDICT: REJECT", then your findings). Do not edit any
+            file except VERDICT_FILE, and do not fetch anything from the network.
+
+      # GATE: parse the verdict, publish it on the PR, and expose it to the merge job.
+      # Fail-closed: a missing or unparseable verdict is a REJECT.
+      - name: Publish verdict
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          AGENT: ${{ inputs.agent || vars.KB_REVIEW_AGENT || 'claude' }}
+          VERDICT_FILE: ${{ runner.temp }}/verdict.txt
+          AUTO_MERGE: ${{ inputs.auto_merge }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$VERDICT_FILE" ]; then
+            VERDICT="REJECT"
+            REASON="Reviewer produced no verdict file. Failing closed."
+          else
+            VERDICT="$(head -n1 "$VERDICT_FILE" | sed -E 's/^VERDICT:[[:space:]]*//' | tr -d '[:space:]')"
+            REASON="$(tail -n +2 "$VERDICT_FILE")"
+          fi
+          if [ "$VERDICT" != "APPROVE" ]; then VERDICT="REJECT"; fi
+          echo "Reviewer verdict: $VERDICT"
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+
+          gh label create "reviewer-approved" --color 0E8A16 \
+            --description "Malicious-input reviewer approved" 2>/dev/null || true
+          gh label create "needs-human-review" --color B60205 \
+            --description "Automated PR flagged by the malicious-input reviewer" 2>/dev/null || true
+
+          BODY_FILE="$RUNNER_TEMP/comment.md"
+          if [ "$VERDICT" = "APPROVE" ]; then
+            gh pr edit "$PR" --add-label "reviewer-approved" \
+              --remove-label "needs-human-review" --remove-label "awaiting-review" || true
+            if [ "${AUTO_MERGE:-true}" = "true" ]; then
+              NEXT="This PR will now be merged automatically."
+            else
+              NEXT="Auto-merge is disabled for this run, so the PR stays open."
+            fi
+            printf '%s\n' "**Malicious-input reviewer: APPROVE.**" "" "$NEXT" "" > "$BODY_FILE"
+          else
+            gh pr edit "$PR" --add-label "needs-human-review" \
+              --remove-label "reviewer-approved" --remove-label "awaiting-review" || true
+            printf '%s\n' "**Malicious-input reviewer: REJECT.** Not merged. Do not merge without careful human review." "" > "$BODY_FILE"
+          fi
+          {
+            echo "<details><summary>Reviewer findings</summary>"
+            echo
+            echo "$REASON"
+            echo
+            echo "</details>"
+            echo
+            echo "---"
+            echo "_Reviewed by \`${AGENT}\` via the KB Review and Merge workflow._"
+          } >> "$BODY_FILE"
+          gh pr comment "$PR" --body-file "$BODY_FILE"
+
+  # ---------------------------------------------------------------------------
+  # JOB 2: merge. Runs only on an APPROVE verdict.
+  # ---------------------------------------------------------------------------
+  merge:
+    name: Merge approved PR
+    needs: review
+    if: needs.review.outputs.verdict == 'APPROVE' && inputs.auto_merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          echo "Verdict was APPROVE. Merging PR #$PR."
+
+          # Prefer GitHub auto-merge: it still honours branch protection (required
+          # checks, required reviewers) and merges once those pass. Repos without
+          # auto-merge enabled fall back to an immediate merge.
+          if gh pr merge "$PR" --squash --delete-branch --auto; then
+            echo "Queued for auto-merge (merges once branch protection is satisfied)."
+          else
+            echo "Auto-merge unavailable on this repo; merging immediately."
+            gh pr merge "$PR" --squash --delete-branch
+            echo "Merged."
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Stage 2: review and merge"
+            echo
+            echo "- PR: #${{ inputs.pr }}"
+            echo "- Verdict: \`${{ needs.review.outputs.verdict }}\`"
+            echo "- Reviewer: \`${{ inputs.agent }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Reported explicitly so a REJECT shows up as a distinct, legible outcome rather
+  # than a silently skipped merge job.
+  blocked:
+    name: Merge blocked
+    needs: review
+    if: needs.review.outputs.verdict != 'APPROVE'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        run: |
+          {
+            echo "### Stage 2: merge blocked"
+            echo
+            echo "PR #${{ inputs.pr }} was **not** merged. Verdict: \`${{ needs.review.outputs.verdict }}\`."
+            echo "The PR is labeled \`needs-human-review\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Not merged (verdict: ${{ needs.review.outputs.verdict }})."
