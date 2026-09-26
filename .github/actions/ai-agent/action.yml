@@ -1,0 +1,176 @@
+name: "AI agent runner"
+description: >-
+  Runs a prompt through a pluggable coding agent. Supports Claude Code, OpenAI
+  Codex, Gemini CLI, and any other agent via a custom install/run command.
+
+inputs:
+  agent:
+    description: "Which agent to run: claude | codex | gemini | custom"
+    required: false
+    default: "claude"
+  prompt:
+    description: "The prompt to run. Passed to the agent via env, never interpolated into a shell string."
+    required: true
+  model:
+    description: "Model override passed through to the agent. Empty means the agent default."
+    required: false
+    default: ""
+  allowed_tools:
+    description: "Tool allowlist. Claude Code only; ignored by other agents."
+    required: false
+    default: ""
+  max_turns:
+    description: "Turn cap. Claude Code only; ignored by other agents."
+    required: false
+    default: "60"
+  working_directory:
+    description: "Directory the agent runs in."
+    required: false
+    default: "."
+  claude_code_oauth_token:
+    description: "Claude subscription token from `claude setup-token`. Preferred for agent=claude."
+    required: false
+    default: ""
+  anthropic_api_key:
+    description: "Metered Anthropic API key. Alternative to claude_code_oauth_token."
+    required: false
+    default: ""
+  openai_api_key:
+    description: "OpenAI API key. Required for agent=codex."
+    required: false
+    default: ""
+  gemini_api_key:
+    description: "Google AI Studio key. Required for agent=gemini."
+    required: false
+    default: ""
+  custom_install:
+    description: "Shell command that installs the custom agent CLI. agent=custom only."
+    required: false
+    default: ""
+  custom_command:
+    description: >-
+      Shell command that runs the custom agent. agent=custom only. The prompt is
+      written to the file named by $AGENT_PROMPT_FILE, and $AGENT_MODEL holds the
+      model input.
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    # Reject an unknown agent name up front rather than silently running nothing.
+    - name: Validate agent
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+      run: |
+        set -euo pipefail
+        case "$AGENT" in
+          claude|codex|gemini|custom) echo "Agent: $AGENT" ;;
+          *) echo "::error::Unknown agent '$AGENT'. Expected one of: claude, codex, gemini, custom."; exit 1 ;;
+        esac
+
+    # The prompt travels through the environment, so no prompt content is ever
+    # interpolated into a shell command line.
+    - name: Stage prompt
+      id: stage
+      shell: bash
+      env:
+        AGENT_PROMPT: ${{ inputs.prompt }}
+      run: |
+        set -euo pipefail
+        printf '%s\n' "$AGENT_PROMPT" > "$RUNNER_TEMP/agent-prompt.md"
+        echo "prompt_file=$RUNNER_TEMP/agent-prompt.md" >> "$GITHUB_OUTPUT"
+        echo "Staged prompt ($(wc -c < "$RUNNER_TEMP/agent-prompt.md") bytes)."
+
+    # claude_args cannot be assembled inline in the `with:` block below, so build
+    # it here and hand it over as a step output.
+    - name: Build Claude args
+      id: claude_args
+      if: inputs.agent == 'claude'
+      shell: bash
+      env:
+        MAX_TURNS: ${{ inputs.max_turns }}
+        ALLOWED_TOOLS: ${{ inputs.allowed_tools }}
+        MODEL: ${{ inputs.model }}
+      run: |
+        set -euo pipefail
+        ARGS="--max-turns ${MAX_TURNS}"
+        if [ -n "$ALLOWED_TOOLS" ]; then ARGS="$ARGS --allowedTools \"$ALLOWED_TOOLS\""; fi
+        if [ -n "$MODEL" ]; then ARGS="$ARGS --model \"$MODEL\""; fi
+        echo "value=$ARGS" >> "$GITHUB_OUTPUT"
+        echo "claude_args: $ARGS"
+
+    - name: Run Claude Code
+      if: inputs.agent == 'claude'
+      uses: anthropics/claude-code-action@v1
+      with:
+        claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
+        anthropic_api_key: ${{ inputs.anthropic_api_key }}
+        prompt: ${{ inputs.prompt }}
+        claude_args: ${{ steps.claude_args.outputs.value }}
+
+    - name: Run Codex
+      if: inputs.agent == 'codex'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        AGENT_MODEL: ${{ inputs.model }}
+        AGENT_PROMPT_FILE: ${{ steps.stage.outputs.prompt_file }}
+      run: |
+        set -euo pipefail
+        if [ -z "${OPENAI_API_KEY:-}" ]; then
+          echo "::error::agent=codex requires an OPENAI_API_KEY (pass openai_api_key)."
+          exit 1
+        fi
+        npm install -g @openai/codex@latest
+        ARGS=(exec --full-auto)
+        if [ -n "${AGENT_MODEL:-}" ]; then ARGS+=(--model "$AGENT_MODEL"); fi
+        codex "${ARGS[@]}" "$(cat "$AGENT_PROMPT_FILE")"
+
+    - name: Run Gemini CLI
+      if: inputs.agent == 'gemini'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        AGENT_MODEL: ${{ inputs.model }}
+        AGENT_PROMPT_FILE: ${{ steps.stage.outputs.prompt_file }}
+      run: |
+        set -euo pipefail
+        if [ -z "${GEMINI_API_KEY:-}" ]; then
+          echo "::error::agent=gemini requires a GEMINI_API_KEY (pass gemini_api_key)."
+          exit 1
+        fi
+        npm install -g @google/gemini-cli@latest
+        ARGS=(--yolo)
+        if [ -n "${AGENT_MODEL:-}" ]; then ARGS+=(--model "$AGENT_MODEL"); fi
+        gemini "${ARGS[@]}" --prompt "$(cat "$AGENT_PROMPT_FILE")"
+
+    # Escape hatch for any agent not listed above (Cursor, Aider, opencode, a
+    # self-hosted runner, ...). The repo owner supplies both commands, so they are
+    # trusted input, not attacker input.
+    - name: Run custom agent
+      if: inputs.agent == 'custom'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        AGENT_MODEL: ${{ inputs.model }}
+        AGENT_PROMPT_FILE: ${{ steps.stage.outputs.prompt_file }}
+        AGENT_CUSTOM_INSTALL: ${{ inputs.custom_install }}
+        AGENT_CUSTOM_COMMAND: ${{ inputs.custom_command }}
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+      run: |
+        set -euo pipefail
+        if [ -z "${AGENT_CUSTOM_COMMAND:-}" ]; then
+          echo "::error::agent=custom requires custom_command."
+          exit 1
+        fi
+        if [ -n "${AGENT_CUSTOM_INSTALL:-}" ]; then
+          echo "Installing custom agent..."
+          bash -c "$AGENT_CUSTOM_INSTALL"
+        fi
+        bash -c "$AGENT_CUSTOM_COMMAND"

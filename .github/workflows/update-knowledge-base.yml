@@ -1,19 +1,19 @@
 name: Update Security Knowledge Base
 
-# Runs Claude on a schedule to distill fresh, reputable public security research
-# into the sh-kb-* knowledge bases, then gates the result behind a SECOND,
-# adversarial Claude reviewer that scans the diff for malicious / injected content.
-# Only if that reviewer APPROVES is the PR auto-merged; otherwise it is left open
-# and labeled for a human.
+# STAGE 1 of 2: generate knowledge-base edits and open a PR. Nothing is reviewed
+# or merged here.
 #
-# Auth: uses your Claude subscription via a CLAUDE_CODE_OAUTH_TOKEN secret
-# (generate with `claude setup-token`) — NOT a metered Anthropic API key. Both the
-# generator and the reviewer draw on your Claude session/usage limits.
+# Once the PR is raised successfully this workflow dispatches
+# `kb-review-and-merge.yml` (STAGE 2), which runs the adversarial malicious-input
+# reviewer and merges the PR only on an APPROVE verdict.
+#
+# Agent: pluggable via the `agent` input or the KB_AGENT repo variable. Claude Code
+# (subscription auth via CLAUDE_CODE_OAUTH_TOKEN), OpenAI Codex, Gemini CLI, and any
+# custom CLI are supported. See .github/actions/ai-agent/action.yml.
 #
 # Safety model (see .github/kb-update/{trusted-sources,prompt,review-prompt}.md):
 #   - Generator: WebFetch restricted to a strict domain allowlist; no shell; no push.
-#   - Reviewer: no web access; read-only + writes a single verdict file; fail-closed.
-#   - Auto-merge happens ONLY on an explicit APPROVE verdict.
+#   - Reviewer (stage 2): no web access; read-only plus one verdict file; fail-closed.
 
 on:
   schedule:
@@ -21,72 +21,95 @@ on:
     # Note: day-of-month stepping resets at month boundaries (e.g. 31 -> 1 is a
     # 1-day gap). This is the standard cron approximation of "every other day".
     - cron: "0 6 */2 * *"
-  # Allow maintainers to trigger a run on demand.
   workflow_dispatch:
+    inputs:
+      agent:
+        description: "Agent that generates the KB edits"
+        required: false
+        default: "claude"
+        type: choice
+        options: [claude, codex, gemini, custom]
+      model:
+        description: "Model override for the generator (blank = agent default)"
+        required: false
+        default: ""
+        type: string
 
-# Least privilege for the job: push the PR branch, open/label/comment on the PR,
-# and mint an OIDC token (required by anthropics/claude-code-action).
-# NOTE: the workflow never writes to `main` — every change lands in a PR that a
-# human reviews and merges.
+# Least privilege: push the PR branch, open/label the PR, mint an OIDC token for
+# claude-code-action, and dispatch the stage-2 workflow (`actions: write`).
+# This workflow never writes to `main`.
 permissions:
   contents: write
   pull-requests: write
   id-token: write
+  actions: write
 
 concurrency:
   group: kb-update
   cancel-in-progress: false
 
+env:
+  PR_BRANCH: automated/kb-update
+
 jobs:
-  update-kb:
+  # ---------------------------------------------------------------------------
+  # JOB 1 (and only job here): generate edits, open the PR, hand off to stage 2.
+  # ---------------------------------------------------------------------------
+  create-pr:
+    name: Generate KB updates and open PR
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Full history so the reviewer can diff the PR branch against main.
+          # Full history so stage 2 can diff the PR branch against main.
           fetch-depth: 0
 
-      # 1) GENERATOR — Claude edits the KB from trusted sources. No commit, no push.
+      # GENERATOR: the agent edits the KB from trusted sources. No commit, no push.
       - name: Generate knowledge-base updates
-        uses: anthropics/claude-code-action@v1
+        uses: ./.github/actions/ai-agent
         with:
-          # Subscription auth (your Claude limits), not an API key.
+          agent: ${{ inputs.agent || vars.KB_AGENT || 'claude' }}
+          model: ${{ inputs.model || vars.KB_MODEL || '' }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          custom_install: ${{ vars.KB_AGENT_INSTALL }}
+          custom_command: ${{ vars.KB_AGENT_COMMAND }}
+          # A successful run that exceeds the cap is reported as a failure and its
+          # edits are discarded (run #5 finished in 67 turns against a cap of 60).
+          max_turns: "120"
+          # Tool allowlist = the security boundary. No Bash (no shell). WebFetch is
+          # scoped to trusted domains ONLY; WebSearch may discover URLs but off-list
+          # domains cannot be fetched. Keep this list identical to trusted-sources.md.
+          allowed_tools: 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch(domain:owasp.org),WebFetch(domain:cheatsheetseries.owasp.org),WebFetch(domain:cwe.mitre.org),WebFetch(domain:capec.mitre.org),WebFetch(domain:nvd.nist.gov),WebFetch(domain:csrc.nist.gov),WebFetch(domain:developer.mozilla.org),WebFetch(domain:portswigger.net),WebFetch(domain:googleprojectzero.blogspot.com),WebFetch(domain:github.blog),WebFetch(domain:github.com),WebFetch(domain:raw.githubusercontent.com),WebFetch(domain:hackerone.com)'
           prompt: |
             Read .github/kb-update/prompt.md and follow it exactly, including all of
             its security and prompt-injection rules. Read
             .github/kb-update/trusted-sources.md for the domain allowlist. Make small,
             high-signal, well-sourced improvements to the sh-kb-* knowledge bases and
             write .github/kb-update/last-run-summary.md. Do not commit or push.
-          # Turn cap is generous: a successful run that exceeds it is reported as a failure
-          # and its edits are discarded (run #5 finished in 67 turns against a cap of 60).
-          # Tool allowlist = the security boundary. No Bash (no shell). WebFetch is
-          # scoped to trusted domains ONLY; WebSearch may discover URLs but off-list
-          # domains cannot be fetched. Keep this list identical to trusted-sources.md.
-          claude_args: |
-            --max-turns 120 --allowedTools "Read,Edit,Write,Glob,Grep,WebSearch,WebFetch(domain:owasp.org),WebFetch(domain:cheatsheetseries.owasp.org),WebFetch(domain:cwe.mitre.org),WebFetch(domain:capec.mitre.org),WebFetch(domain:nvd.nist.gov),WebFetch(domain:csrc.nist.gov),WebFetch(domain:developer.mozilla.org),WebFetch(domain:portswigger.net),WebFetch(domain:googleprojectzero.blogspot.com),WebFetch(domain:github.blog),WebFetch(domain:github.com),WebFetch(domain:raw.githubusercontent.com),WebFetch(domain:hackerone.com)"
 
-      # 2) Did anything change?
       - name: Detect changes
         id: diff
         run: |
+          set -euo pipefail
           if [ -n "$(git status --porcelain)" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No knowledge-base changes this run."
           fi
 
-      # 3) Open (or update) a PR from the generated changes. The bot NEVER writes to
-      #    main — this PR is what a human reviews and merges.
       - name: Create pull request
         id: cpr
         if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          branch: automated/kb-update
+          branch: ${{ env.PR_BRANCH }}
           base: main
           delete-branch: true
           commit-message: "chore(kb): automated knowledge-base refresh"
@@ -94,109 +117,54 @@ jobs:
           labels: |
             knowledge-base
             automated
-            needs-human-review
+            awaiting-review
           body: |
             ## Automated knowledge-base refresh
 
-            Generated by the scheduled **Update Security Knowledge Base** workflow and
-            checked by an adversarial malicious-input reviewer (its verdict is posted as a
-            comment below once the run finishes).
+            Generated by the scheduled **Update Security Knowledge Base** workflow
+            (stage 1).
 
-            **A human must review and merge this PR — the bot does not write to `main`.**
-            Even on an `APPROVE` verdict this stays open for you to merge. Scrutinize any
-            content sourced from HackerOne (Tier 4) most closely.
+            The **KB Review and Merge** workflow (stage 2) now runs an adversarial
+            malicious-input reviewer against this diff. It posts its verdict as a
+            comment below, and **auto-merges this PR only on an `APPROVE` verdict**.
+            A `REJECT` leaves the PR open and labeled `needs-human-review`.
 
             Run summary is in `.github/kb-update/last-run-summary.md` in this PR.
 
-      # 4) Prepare review context: check out the PR branch so the working tree holds the
-      #    proposed content, and capture the diff for the reviewer.
-      - name: Prepare review context
-        if: steps.diff.outputs.changed == 'true'
-        env:
-          DIFF_FILE: ${{ runner.temp }}/pr.diff
-        run: |
-          set -euo pipefail
-          git fetch --quiet origin main automated/kb-update
-          git checkout --quiet automated/kb-update
-          git diff origin/main...HEAD > "$DIFF_FILE"
-          echo "Wrote diff ($(wc -l < "$DIFF_FILE") lines) to $DIFF_FILE"
-          git diff --stat origin/main...HEAD || true
-
-      # 5) REVIEWER — a SECOND Claude run, adversarially checking the diff for
-      #    malicious / injected / out-of-scope content. No web, no shell; fail-closed.
-      - name: Review diff for malicious input
-        if: steps.diff.outputs.changed == 'true'
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: |
-            Read .github/kb-update/review-prompt.md and follow it exactly. You are the
-            malicious-input reviewer for this automated knowledge-base PR. The complete
-            proposed diff is at DIFF_FILE = ${{ runner.temp }}/pr.diff, and the full
-            proposed files are in the current working tree — read both. Write your verdict
-            to VERDICT_FILE = ${{ runner.temp }}/verdict.txt (first line exactly
-            "VERDICT: APPROVE" or "VERDICT: REJECT", then your findings). Do not edit any
-            file except VERDICT_FILE, and do not fetch anything from the network.
-          # Read-only inspection + write the verdict file. No web, no shell.
-          claude_args: |
-            --max-turns 30 --allowedTools "Read,Grep,Glob,Write"
-
-      # 6) GATE (advisory only) — post the reviewer's verdict on the PR and label it.
-      #    The workflow NEVER merges: a human makes the final call on every change.
-      - name: Post reviewer verdict on PR
-        if: steps.diff.outputs.changed == 'true'
+      # HANDOFF: trigger stage 2 now that the PR is open. `workflow_dispatch` is one
+      # of the two events GITHUB_TOKEN is still allowed to trigger, so this works
+      # where a plain `pull_request` trigger would silently never fire for a
+      # bot-authored PR.
+      - name: Trigger review and merge
+        if: steps.diff.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number != ''
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.cpr.outputs.pull-request-number }}
-          VERDICT_FILE: ${{ runner.temp }}/verdict.txt
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REVIEW_AGENT: ${{ vars.KB_REVIEW_AGENT || inputs.agent || vars.KB_AGENT || 'claude' }}
         run: |
           set -euo pipefail
-          if [ -z "${PR:-}" ]; then
-            echo "No PR number (no changes to create a PR from?) — nothing to do."
-            exit 0
-          fi
+          echo "PR #$PR opened; dispatching kb-review-and-merge.yml on $DEFAULT_BRANCH."
+          gh workflow run kb-review-and-merge.yml \
+            --ref "$DEFAULT_BRANCH" \
+            -f pr="$PR" \
+            -f agent="$REVIEW_AGENT"
+          echo "Dispatched. Review and merge is handled by that workflow."
 
-          if [ ! -f "$VERDICT_FILE" ]; then
-            echo "No verdict file produced — treating as REJECT (fail-closed)."
-            VERDICT="REJECT"
-            REASON="Reviewer produced no verdict file."
-          else
-            VERDICT="$(head -n1 "$VERDICT_FILE" | sed -E 's/^VERDICT:[[:space:]]*//' | tr -d '[:space:]')"
-            REASON="$(tail -n +2 "$VERDICT_FILE")"
-          fi
-          echo "Reviewer verdict: $VERDICT"
-
-          gh label create "reviewer-approved" --color 0E8A16 \
-            --description "Malicious-input reviewer approved; awaiting human merge" 2>/dev/null || true
-          gh label create "needs-human-review" --color B60205 \
-            --description "Automated KB PR flagged by the malicious-input reviewer" 2>/dev/null || true
-
-          if [ "$VERDICT" = "APPROVE" ]; then
-            gh pr edit "$PR" --add-label "reviewer-approved" --remove-label "needs-human-review" || true
-            gh pr comment "$PR" --body "$(printf '%s\n' \
-              "✅ **Malicious-input reviewer: APPROVE.**" \
-              "" \
-              "This is advisory only — **a human still needs to review and merge.** The bot does not write to \`main\`." \
-              "" \
-              "<details><summary>Reviewer findings</summary>" \
-              "" \
-              "$REASON" \
-              "" \
-              "</details>" \
-              "" \
-              "---" \
-              "_Generated by [Claude Code](https://claude.ai/code)_")"
-          else
-            gh pr edit "$PR" --add-label "needs-human-review" --remove-label "reviewer-approved" || true
-            gh pr comment "$PR" --body "$(printf '%s\n' \
-              "🛑 **Malicious-input reviewer: REJECT.** Do not merge without careful human review." \
-              "" \
-              "<details><summary>Reviewer findings</summary>" \
-              "" \
-              "$REASON" \
-              "" \
-              "</details>" \
-              "" \
-              "---" \
-              "_Generated by [Claude Code](https://claude.ai/code)_")"
-          fi
+      - name: Summary
+        if: always()
+        env:
+          CHANGED: ${{ steps.diff.outputs.changed }}
+          PR: ${{ steps.cpr.outputs.pull-request-number }}
+        run: |
+          {
+            echo "### Stage 1: KB update"
+            echo
+            if [ "${CHANGED:-false}" != "true" ]; then
+              echo "No changes produced this run."
+            elif [ -n "${PR:-}" ]; then
+              echo "Opened PR #${PR}. Stage 2 (review and merge) dispatched."
+            else
+              echo "Changes were produced but no PR number was returned."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
