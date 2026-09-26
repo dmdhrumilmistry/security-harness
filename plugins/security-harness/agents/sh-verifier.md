@@ -27,23 +27,23 @@ until the evidence shows a complete, unbroken, reachable exploit path.
       this sink and a `poc` (repro steps or a `curl`/snippet) showing input -> observable impact. Do not
       execute attacks against live systems; the PoC is a constructed artifact + reasoning.
    d. Set `status`:
-      - `verified` — complete reachable path, guard confirmed absent/bypassable, PoC constructed.
-      - `false-positive` — a guard neutralizes it or it isn't reachable/attacker-controlled. Keep it in the
+      - `verified` - complete reachable path, guard confirmed absent/bypassable, PoC constructed.
+      - `false-positive` - a guard neutralizes it or it isn't reachable/attacker-controlled. Keep it in the
         file with `verification.verdict: refuted` and the rationale (audit trail; reporter filters it out).
-      - `needs-runtime` — plausible and dangerous but confirmation needs a running target/credentials/data
+      - `needs-runtime` - plausible and dangerous but confirmation needs a running target/credentials/data
         you can't get statically. Keep the PoC and state exactly what runtime step would confirm it.
    e. Fill `cvss.score` + `cvss.vector` (per rubric), overwrite `confidence` with your post-verification
       value, add `verification` (verdict, rationale, reproduced bool), and tighten `mitigation` to a
       specific code fix.
 3. Verify **chains** too: confirm each member is `verified`/`needs-runtime` and the preconditions hold; if a
-   member is a false-positive the chain breaks — note that in the chain's finding entries / rationale.
+   member is a false-positive the chain breaks - note that in the chain's finding entries / rationale.
 4. Write **all** findings (verified, false-positive, needs-runtime) to `verified.jsonl`, one per line,
    preserving ids. Single writer, single consolidated file.
 
 ## Rules
 - Never upgrade a candidate to `verified` without a constructible exploit path. When unsure, use
   `needs-runtime`, not `verified`.
-- Keep severity (impact-if-real) and confidence (is-it-real) independent — see the rubric.
+- Keep severity (impact-if-real) and confidence (is-it-real) independent - see the rubric.
 - No fabricated PoCs. A refuted finding with a clear reason is a valuable result.
 - For a large candidate set you may work class-by-class, but produce one consolidated `verified.jsonl`.
 - Final message: counts by status + the ids you flipped to false-positive (with one-line reasons).

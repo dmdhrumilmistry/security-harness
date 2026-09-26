@@ -1,9 +1,9 @@
 ---
 name: sh-kb-xxe
-description: "Knowledge base for finding XML External Entity injection — XML parsers configured to resolve external/general entities on untrusted input, enabling file read, SSRF, and DoS. Use when hunting XXE. CWE-611/776/827, OWASP A05:2021-Security Misconfiguration."
+description: "Knowledge base for finding XML External Entity injection - XML parsers configured to resolve external/general entities on untrusted input, enabling file read, SSRF, and DoS. Use when hunting XXE. CWE-611/776/827, OWASP A05:2021-Security Misconfiguration."
 ---
 
-# XML External Entity (XXE) — Hunter Knowledge Base
+# XML External Entity (XXE) - Hunter Knowledge Base
 
 An XML parser that resolves external entities processes attacker-supplied XML, letting a DTD declare
 entities that read local files, make server-side requests (SSRF), or exhaust resources (billion laughs).
@@ -14,9 +14,9 @@ responses, RSS/Atom import, XML config upload, `Content-Type: application/xml` o
 
 ## Sinks by ecosystem (grep targets)
 - **Java**: `DocumentBuilderFactory`, `SAXParserFactory`, `XMLInputFactory`, `TransformerFactory`,
-  `SAXReader`, `Unmarshaller`, `XMLReader` — vulnerable unless external entities/DTDs are disabled.
+  `SAXReader`, `Unmarshaller`, `XMLReader` - vulnerable unless external entities/DTDs are disabled.
 - **Python**: `xml.etree.ElementTree` (older), `lxml.etree` with `resolve_entities=True`/custom resolver,
-  `xml.dom.minidom`, `xml.sax` — `defusedxml` is the safe replacement.
+  `xml.dom.minidom`, `xml.sax` - `defusedxml` is the safe replacement.
 - **PHP**: `simplexml_load_string`/`DOMDocument->loadXML` with `LIBXML_NOENT`/`LIBXML_DTDLOAD`.
 - **.NET**: `XmlDocument`/`XmlTextReader` with `DtdProcessing=Parse` and a non-null `XmlResolver`.
 - **Node**: `libxmljs` with `noent:true`, some SOAP/`xml2js` configs.
@@ -35,9 +35,9 @@ responses, RSS/Atom import, XML config upload, `Content-Type: application/xml` o
 - Billion laughs DoS: nested entity expansion.
 - SVG/Office upload: embed the DOCTYPE inside the XML part of an uploaded SVG/DOCX.
 - **XInclude (no DOCTYPE needed)**: when the app rejects/strips a `DOCTYPE` but drops attacker XML into an
-  existing document's body (not the whole document), a `DOCTYPE` declaration isn't possible — instead use
+  existing document's body (not the whole document), a `DOCTYPE` declaration isn't possible - instead use
   `xi:include` if the parser has XInclude enabled: `<foo xmlns:xi="http://www.w3.org/2001/XInclude"><xi:include parse="text" href="file:///etc/passwd"/></foo>`.
-  This bypasses DOCTYPE-based filters entirely, so "no `<!DOCTYPE`" is not itself a false-positive signal —
+  This bypasses DOCTYPE-based filters entirely, so "no `<!DOCTYPE`" is not itself a false-positive signal -
   check whether XInclude is also disabled (`setXIncludeAware(false)` in Java, or equivalent).
 
 ## False-positive filters
@@ -45,7 +45,7 @@ responses, RSS/Atom import, XML config upload, `Content-Type: application/xml` o
   false, `XMLResolver=null`, `resolve_entities=False`, using `defusedxml`, `LIBXML_NONET` and DTD loading off,
   .NET `DtdProcessing.Prohibit`.
 - Java specifically: hardening must **also** set `setXIncludeAware(false)` and `ACCESS_EXTERNAL_DTD`/
-  `ACCESS_EXTERNAL_SCHEMA` to `""` (JAXP 1.5+) — `disallow-doctype-decl` alone still leaves XInclude and
+  `ACCESS_EXTERNAL_SCHEMA` to `""` (JAXP 1.5+) - `disallow-doctype-decl` alone still leaves XInclude and
   external-schema resolution reachable. For SAX/StAX, confirm the hardened factory/property is applied to
   every reader instance the factory creates, not just the factory object itself.
 - .NET 4.5.2+ defaults (`XmlReader`, `XDocument`) are safe out of the box; only flag older TFMs or explicit

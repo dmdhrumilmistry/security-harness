@@ -1,6 +1,6 @@
 # SQLi cheat sheet (per-DB + tricky positions)
 
-## Injection in non-value positions (often missed — attackers love these)
+## Injection in non-value positions (often missed - attackers love these)
 - `ORDER BY <col>`: cannot be parameterized -> must allowlist. Test `ORDER BY (CASE WHEN 1=1 THEN 1 ELSE 2 END)`.
 - `LIMIT`/`OFFSET`: cast to int; test with `1; SELECT ...`.
 - `LIKE '%<x>%'`: input may break out of the literal; also wildcard DoS.

@@ -1,13 +1,13 @@
 ---
 name: sh-kb-race-conditions
-description: "Knowledge base for finding race conditions and TOCTOU flaws — concurrent requests exploiting non-atomic check-then-act logic (double-spend, limit bypass, balance manipulation, file TOCTOU). Use when hunting concurrency/business-logic race bugs. CWE-362/367/366, OWASP A04:2021-Insecure Design."
+description: "Knowledge base for finding race conditions and TOCTOU flaws - concurrent requests exploiting non-atomic check-then-act logic (double-spend, limit bypass, balance manipulation, file TOCTOU). Use when hunting concurrency/business-logic race bugs. CWE-362/367/366, OWASP A04:2021-Insecure Design."
 ---
 
-# Race Conditions & TOCTOU — Hunter Knowledge Base
+# Race Conditions & TOCTOU - Hunter Knowledge Base
 
 A gap between checking a condition and acting on it lets concurrent requests slip through: spend a coupon
 twice, withdraw more than the balance, bypass a rate/quota limit, or swap a file between check and use.
-These are logic bugs — reason about interleavings, not just about a dangerous sink.
+These are logic bugs - reason about interleavings, not just about a dangerous sink.
 
 ## Classic patterns to hunt
 - **Check-then-act on shared state** without a lock/transaction/atomic op: read balance -> if enough ->

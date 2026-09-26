@@ -3,10 +3,10 @@ name: sh-kb-injection
 description: "Knowledge base for finding command/OS injection, template injection (SSTI), code injection (eval), and LDAP/NoSQL/expression injection. Use when hunting injection into shells, template engines, interpreters, or directory queries. CWE-77/78/94/917, OWASP A03:2021-Injection."
 ---
 
-# Command / Code / Template Injection — Hunter Knowledge Base
+# Command / Code / Template Injection - Hunter Knowledge Base
 
 Attacker input is interpreted as an OS command, program code, template expression, or query language.
-Frequently yields remote code execution — treat confirmed cases as critical.
+Frequently yields remote code execution - treat confirmed cases as critical.
 
 ## Sub-classes & sinks
 ### OS command injection (CWE-78)
@@ -45,7 +45,7 @@ cheatsheet). SpEL/OGNL/MVEL expression eval on user input (CWE-917).
 
 ## False-positive filters
 - **Argument vector, no shell**: list-form `subprocess.run([...])`, `execFile`, `spawn` without `shell:true`,
-  `ProcessBuilder` with separate args — arguments can't inject commands.
+  `ProcessBuilder` with separate args - arguments can't inject commands.
 - Input strictly validated/allowlisted (enum of allowed commands), or a numeric/enum type.
 - Template compiled from a **constant**; user data only supplied as bound context variables.
 - Fully hardcoded command with no user data.

@@ -1,9 +1,9 @@
 ---
 name: sh-kb-open-redirect
-description: "Knowledge base for finding open/unvalidated redirects — user-controlled redirect targets that send victims to attacker sites, enabling phishing, token leakage, and OAuth/SSO abuse. Use when hunting open redirects. CWE-601, OWASP A01:2021-Broken Access Control."
+description: "Knowledge base for finding open/unvalidated redirects - user-controlled redirect targets that send victims to attacker sites, enabling phishing, token leakage, and OAuth/SSO abuse. Use when hunting open redirects. CWE-601, OWASP A01:2021-Broken Access Control."
 ---
 
-# Open Redirect — Hunter Knowledge Base
+# Open Redirect - Hunter Knowledge Base
 
 The app redirects to a URL taken from user input without restricting the destination. On its own it's a
 phishing/trust-abuse issue; chained (OAuth `redirect_uri`, token in URL, SSO), it can leak credentials or

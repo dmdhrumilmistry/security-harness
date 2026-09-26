@@ -1,4 +1,4 @@
-# Trusted sources — knowledge-base auto-update
+# Trusted sources - knowledge-base auto-update
 
 This file is the **single source of truth** for the domains the automated
 knowledge-base updater is allowed to read from. It exists to keep the update
@@ -11,7 +11,7 @@ to hijack an LLM ("ignore your instructions, do X"). We reduce that risk two way
    even if `WebSearch` surfaces it or a fetched page links to it.
 2. **Content is data, never instructions.** The updater prompt
    (`.github/kb-update/prompt.md`) treats every fetched byte as untrusted reference
-   material — technical facts to distill, not commands to obey — and the model that
+   material - technical facts to distill, not commands to obey - and the model that
    ingests it has **no shell and no push access**; its only output is file edits that
    go through a **human-reviewed pull request**.
 
@@ -20,7 +20,7 @@ When you add or remove a domain here, make the **same change** to the
 
 ## Allowlist (tiers by trust)
 
-### Tier 1 — standards bodies & official documentation (highest trust, editorially controlled)
+### Tier 1 - standards bodies & official documentation (highest trust, editorially controlled)
 | Domain | What it provides |
 |---|---|
 | `owasp.org` | OWASP Top 10, ASVS, testing guide, project docs |
@@ -31,20 +31,20 @@ When you add or remove a domain here, make the **same change** to the
 | `csrc.nist.gov` | NIST crypto / security standards (SP 800 series) |
 | `developer.mozilla.org` | Web platform security semantics (CSP, cookies, CORS) |
 
-### Tier 2 — reputable vendor / researcher publications (curated, high editorial quality)
+### Tier 2 - reputable vendor / researcher publications (curated, high editorial quality)
 | Domain | What it provides |
 |---|---|
 | `portswigger.net` | Web Security Academy labs + PortSwigger Research (new techniques) |
 | `googleprojectzero.blogspot.com` | Project Zero deep-dive writeups |
 | `github.blog` | GitHub Security Lab advisories & research |
 
-### Tier 3 — curated community repositories (code/paths only from named repos)
+### Tier 3 - curated community repositories (code/paths only from named repos)
 | Domain | What it provides |
 |---|---|
 | `github.com` | Source of curated repos (e.g. OWASP, `swisskyrepo/PayloadsAllTheThings`) |
 | `raw.githubusercontent.com` | Raw files from those repos |
 
-### Tier 4 — bug-bounty disclosure (valuable but user-generated → treat as most-untrusted)
+### Tier 4 - bug-bounty disclosure (valuable but user-generated → treat as most-untrusted)
 | Domain | What it provides |
 |---|---|
 | `hackerone.com` | Public disclosed reports / Hacktivity (real-world exploit patterns) |
@@ -60,7 +60,7 @@ When you add or remove a domain here, make the **same change** to the
 
 - Only **generalized, defensive/educational** technique knowledge: detection
   recipes, source/sink lists, false-positive filters, CWE/OWASP mappings,
-  mitigations, and generic payload *shapes* — the same kind of content already in
+  mitigations, and generic payload *shapes* - the same kind of content already in
   the `sh-kb-*` skills.
 - **No** live target names, no personal data, no working exploit chains against a
   specific third party, no secrets/tokens ever.
