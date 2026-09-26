@@ -152,23 +152,24 @@ repos, and public HackerOne disclosures — into small, well-sourced improvement
 Claude reviewer** then scans the resulting diff for malicious/injected content, and the PR is
 **auto-merged only if that reviewer approves**.
 
-The pipeline runs in four steps:
+The pipeline runs in four steps and **always ends in a pull request that a human merges — the bot never
+writes to `main`:**
 
 1. **Generate** — Claude edits the KB from allowlisted sources.
-2. **Prepare** — stage the changes and capture the diff.
+2. **Open PR** — a deterministic step opens (or updates) a PR on the `automated/kb-update` branch,
+   labeled `needs-human-review`.
 3. **Review (the "second copilot")** — a *separate* Claude run inspects the diff **adversarially** for
    prompt-injection artifacts, out-of-scope edits, secrets/exfil, PII, weaponized exploits, or
    off-allowlist sourcing. It has **no web and no shell**, and **fails closed**: anything suspicious (or
    any uncertainty) → REJECT.
-4. **Gate** — on `APPROVE` the changes are committed and **pushed straight to `main`** (the auto-merge);
-   on `REJECT` (or no verdict) they are pushed to a run-specific `automated/kb-update-<run>` branch and an
-   **issue** is opened (labeled `needs-human-review`) with the reviewer's findings and a "create PR" link.
+4. **Post verdict (advisory)** — the reviewer's verdict is posted as a PR comment and drives the label:
+   `APPROVE` → `reviewer-approved`, `REJECT` (or no verdict) → `needs-human-review`. **Either way the PR
+   stays open for a human to review and merge.** There is no auto-merge and no direct push to `main`.
 
-> The workflow deliberately does **not** open pull requests itself, so it needs no special org toggle
-> ("Allow GitHub Actions to create and approve pull requests") — it runs entirely on the `CLAUDE_CODE_OAUTH_TOKEN`
-> secret and the built-in `GITHUB_TOKEN`. Auto-merge = a direct push to `main` gated by the reviewer; if
-> `main` has branch protection that blocks direct pushes, either exempt this workflow or keep the changes on
-> the review branch.
+> Requires the repo setting **"Allow GitHub Actions to create and approve pull requests"** (Settings →
+> Actions → General → Workflow permissions) so the workflow can open the PR. To guarantee nothing ever
+> reaches `main` unreviewed, also protect `main` with a branch-protection rule requiring a pull request and
+> at least one approving review.
 
 Prompt-injection defenses, since the generator reads the open web:
 
@@ -188,11 +189,9 @@ Prompt-injection defenses, since the generator reads the open web:
   authenticates against **your Claude subscription's usage limits** rather than a metered API key —
   generate it locally with `claude setup-token` (requires an active Claude Pro/Max subscription) and paste
   the result. Both the generator and the reviewer draw on this token.
-- For auto-merge (the direct push to `main` on APPROVE) to succeed, `main` must allow the workflow's
-  `GITHUB_TOKEN` to push — i.e. no branch protection requiring a PR/human review for pushes. The adversarial
-  reviewer is the substitute for that gate. If you'd rather keep a human in the loop on every change, protect
-  `main`: approved changes then land on the `automated/kb-update-<run>` branch (via the same REJECT path) for
-  you to PR and merge.
+- Enable **"Allow GitHub Actions to create and approve pull requests"** (Settings → Actions → General →
+  Workflow permissions) so the workflow can open its PR. Recommended: add a branch-protection rule on `main`
+  requiring a PR and an approving review, so no automated change can land without a human.
 - To change which sources are allowed, edit the allowlist in `trusted-sources.md` **and** the matching
   `WebFetch(domain:...)` entries in the workflow — keep the two in sync.
 
