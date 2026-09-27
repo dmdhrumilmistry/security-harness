@@ -1,0 +1,7 @@
+
+# Python bytecode from the bundled scripts
+__pycache__/
+*.py[cod]
+
+# Review run trees
+.security-harness/

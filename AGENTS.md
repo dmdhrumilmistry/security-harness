@@ -28,7 +28,7 @@ Other typography rules:
 A repo-wide sweep is available if a dash slips in:
 
 ```bash
-python - <<'PY'
+python3 - <<'PY'
 import os, io
 DASHES = {chr(0x2014): '-', chr(0x2013): '-', chr(0x2015): '-'}
 for root, dirs, fs in os.walk('.'):
@@ -66,8 +66,8 @@ docs/DISTRIBUTION.md                # packaging and public-listing steps
 `plugins/security-harness/skills/` and run:
 
 ```bash
-python scripts/sync-agent-skills.py           # regenerate
-python scripts/sync-agent-skills.py --check   # verify it is current
+python3 scripts/sync-agent-skills.py           # regenerate
+python3 scripts/sync-agent-skills.py --check   # verify it is current
 ```
 
 It exists because Gemini CLI loads an extension's skills from the extension root,

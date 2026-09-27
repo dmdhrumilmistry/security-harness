@@ -358,9 +358,9 @@ deleted at the end of the run:
 
 | Platform | Location |
 |---|---|
-| Windows | `%LOCALAPPDATA%\security-harness\cache` |
+| Linux / BSD | `$XDG_CACHE_HOME/security-harness`, else `~/.cache/security-harness` |
 | macOS | `~/Library/Caches/security-harness` |
-| other | `$XDG_CACHE_HOME/security-harness`, else `~/.cache/security-harness` |
+| Windows | `%LOCALAPPDATA%\security-harness\cache` |
 
 `SH_REVIEW_CACHE_DIR` overrides it.
 

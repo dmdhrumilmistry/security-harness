@@ -61,8 +61,8 @@ skills into a discovery directory. Codex additionally picks up `AGENTS.md` on it
 ```bash
 git clone https://github.com/dmdhrumilmistry/security-harness
 cd security-harness
-python scripts/sync-agent-skills.py --install agents     # ~/.agents/skills
-python scripts/sync-agent-skills.py --install opencode   # ~/.config/opencode/skills
+python3 scripts/sync-agent-skills.py --install agents     # ~/.agents/skills
+python3 scripts/sync-agent-skills.py --install opencode   # ~/.config/opencode/skills
 ```
 
 **Graft is installed and set up automatically by the pipeline.** Stage 0 runs `npm install -g
@@ -257,9 +257,9 @@ Every run records what it cost, so "the cache is working" and "reviews got slowe
 being matters of opinion.
 
 ```bash
-python <skill>/scripts/sh-metrics.py path      # where records live
-python <skill>/scripts/sh-metrics.py report    # aggregate, by model
-python <skill>/scripts/sh-metrics.py purge --older-than-days 30
+python3 <skill>/scripts/sh-metrics.py path      # where records live
+python3 <skill>/scripts/sh-metrics.py report    # aggregate, by model
+python3 <skill>/scripts/sh-metrics.py purge --older-than-days 30
 ```
 
 Two append-only JSONL files - `runs.jsonl` (repo, PR, tier, verdict, totals, the flags you
@@ -269,11 +269,20 @@ the crash.
 
 | Platform | Metrics | Cache |
 |---|---|---|
-| Windows | `%LOCALAPPDATA%\security-harness\metrics` | `%LOCALAPPDATA%\security-harness\cache` |
+| **Linux / BSD** | `$XDG_DATA_HOME/security-harness/metrics`<br>default `~/.local/share/security-harness/metrics` | `$XDG_CACHE_HOME/security-harness`<br>default `~/.cache/security-harness` |
 | macOS | `~/Library/Application Support/security-harness/metrics` | `~/Library/Caches/security-harness` |
-| other | `$XDG_DATA_HOME/security-harness/metrics` | `$XDG_CACHE_HOME/security-harness` |
+| Windows | `%LOCALAPPDATA%\security-harness\metrics` | `%LOCALAPPDATA%\security-harness\cache` |
 
-Override with `SH_METRICS_DIR` and `SH_REVIEW_CACHE_DIR`.
+Linux follows the XDG Base Directory spec, so both honour `XDG_DATA_HOME` and
+`XDG_CACHE_HOME` when set and fall back to `~/.local/share` and `~/.cache` when they are
+not. Override either directly with `SH_METRICS_DIR` and `SH_REVIEW_CACHE_DIR`.
+
+**On `python` vs `python3`:** most Linux distributions ship `python3` and have no `python`
+at all, so the examples here use `python3`. The bundled scripts carry a
+`#!/usr/bin/env python3` shebang and are executable, so `./scripts/sh-metrics.py report`
+works directly on Linux and macOS. The skill resolves
+`PY="$(command -v python3 || command -v python)"` once per run, which covers all three
+platforms including Git Bash on Windows.
 
 **Strictly local.** Neither script contains any network code or reporting endpoint.
 Anything token-shaped is redacted before it is written, because local files get pasted

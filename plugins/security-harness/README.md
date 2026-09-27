@@ -24,7 +24,7 @@ gemini extensions install https://github.com/dmdhrumilmistry/security-harness
 ```bash
 git clone https://github.com/dmdhrumilmistry/security-harness
 cd security-harness
-python scripts/sync-agent-skills.py --install agents
+python3 scripts/sync-agent-skills.py --install agents
 ```
 
 ## Use
@@ -68,7 +68,8 @@ The review and the commit status are **posted by default** (`--confirm` to be as
 `--dry-run` to send nothing). Posting runs through `scripts/sh-pr-post.py`, which does the
 whole sequence or says which part failed, and never leaves the status stuck on `pending`.
 
-`scripts/sh-metrics.py` records what every run cost - model, tokens, duration, cache reuse
+`scripts/sh-metrics.py` (run it as `python3 sh-metrics.py`, or directly, since it is
+executable and carries a `python3` shebang) records what every run cost - model, tokens, duration, cache reuse
 - to append-only JSONL under your own data directory. `sh-metrics.py path` prints where,
 `report` aggregates, `purge` deletes. Strictly local: no network code, no endpoint, and
 anything token-shaped is redacted before it is written.

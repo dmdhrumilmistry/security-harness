@@ -135,7 +135,19 @@ source. Do not send source or findings to any external service.
 
 ## Phase 0: resolve the PR
 
-1. `TS` from Current state.
+1. `TS` from Current state, and **resolve the Python interpreter once**, before anything
+   below needs it:
+
+```
+PY="$(command -v python3 || command -v python)"
+```
+
+   Most Linux distributions ship `python3` and have no `python` at all, so a bare
+   `python` fails on a default Debian or Ubuntu box. The bundled scripts also carry a
+   `#!/usr/bin/env python3` shebang and are executable, so `./scripts/<name>.py` works
+   directly on Linux and macOS; `$PY` is the one form that works on all three platforms,
+   Git Bash included. If neither interpreter is found, say so and stop: the cache, the
+   metrics and the posting step all need it.
 2. **Resolve the PR into a repo and a number.** Set `REPO` and `N`, and use both
    everywhere after this. Never call a `gh pr` command without `--repo "$REPO"`: without
    it `gh` silently targets the current directory's remote, which is the wrong repo the
@@ -232,7 +244,8 @@ directory into the worktree. Substitute the literal path into every delegation p
 
 ```
 METRICS="<skill dir>/scripts/sh-metrics.py"
-python "$METRICS" start --run-id "pr-$N-$TS" --repo "$REPO" --pr "$N" \n  --tier <tier> --cache "<hit | miss: reason>" --arguments "<the flags the user passed>"
+"$PY" "$METRICS" start --run-id "pr-$N-$TS" --repo "$REPO" --pr "$N" \
+  --tier <tier> --cache "<hit | miss: reason>" --arguments "<the flags the user passed>"
 ```
 
 Metrics are **local only**. The script has no network code and no endpoint; records land
@@ -300,7 +313,7 @@ Do this yourself with Bash and Grep. It must cost nothing.
 
    ```
    CACHE="<skill dir>/scripts/sh-review-cache.py"
-   python "$CACHE" get --repo "$REPO" --pr "$N" --model "<the model you are running as>"
+   "$PY" "$CACHE" get --repo "$REPO" --pr "$N" --model "<the model you are running as>"
    ```
 
    Pass the model you are actually running as. The script treats an unspecified model as
@@ -327,7 +340,7 @@ paying a lot to learn nothing.
 1. The cache hit (so knowledge bases, skill version, and model all still match).
 2. The set of PR-changed paths is identical to the cached run's.
 3. Every one of those paths has an identical content hash. Use
-   `python "$CACHE" changed --repo "$REPO" --pr "$N" --file <current hashes>`; the
+   `"$PY" "$CACHE" changed --repo "$REPO" --pr "$N" --file <current hashes>`; the
    `changed` and `vanished` lists must both be empty.
 4. The added-line sets in `diff-index.json` are identical to the cached run's.
 5. **The base moved under the PR without touching anything the findings depend on.**
@@ -427,7 +440,8 @@ Two rules that keep this honest:
 **Record every agent you launch**, as it finishes:
 
 ```
-python "$METRICS" event --run-id "pr-$N-$TS" --phase hunt --agent sh-hunter \n  --vuln-class <class> --model <model> --duration-ms <ms> --status <ok|failed>
+"$PY" "$METRICS" event --run-id "pr-$N-$TS" --phase hunt --agent sh-hunter \
+  --vuln-class <class> --model <model> --duration-ms <ms> --status <ok|failed>
 ```
 
 Add `--reused` instead of launching anything when a class's findings were carried forward
@@ -569,7 +583,7 @@ restores the prompt; `--dry-run` still sends nothing.
 2. **Post with the script**, not by hand:
 
 ```
-python "<skill dir>/scripts/sh-pr-post.py" post \
+"$PY" "<skill dir>/scripts/sh-pr-post.py" post \
   --repo "$REPO" --pr "$N" \
   --payload <LOG_DIR>/review/review-payload.json \
   --verdict <LOG_DIR>/review/verdict.json \
@@ -612,7 +626,7 @@ still analysed the code.
 Build the entry and store it:
 
 ```
-python "$CACHE" put --repo "$REPO" --pr "$N" --model "<model>" --file <LOG_DIR>/review/cache-entry.json
+"$PY" "$CACHE" put --repo "$REPO" --pr "$N" --model "<model>" --file <LOG_DIR>/review/cache-entry.json
 ```
 
 `cache-entry.json` holds:
@@ -636,7 +650,9 @@ the next `get` checks.
    at Tier 0: a run that never finishes is exactly the one worth being able to count.
 
 ```
-python "$METRICS" finish --run-id "pr-$N-$TS" --verdict <verdict> --status-state <state> \n  --findings <n> --posted <n> --deduped <n> --reused-files <n> --reused-verdicts <n> \n  --agents-launched <n> --duration-ms <ms>
+"$PY" "$METRICS" finish --run-id "pr-$N-$TS" --verdict <verdict> --status-state <state> \
+  --findings <n> --posted <n> --deduped <n> --reused-files <n> --reused-verdicts <n> \
+  --agents-launched <n> --duration-ms <ms>
 ```
 
    Add `--tokens-in`, `--tokens-out` and `--cost-usd` when the harness surfaces them. Omit
