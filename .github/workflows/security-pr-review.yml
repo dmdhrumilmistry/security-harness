@@ -1,0 +1,105 @@
+name: Security PR Review
+
+# Runs the sh-pr-review skill on every pull request, posts the findings as inline
+# review comments on the PR, and sets the `security/pr-review` commit status.
+#
+# The status is what branch protection can enforce. Until it is made a required
+# check it is advisory: the job reports, nothing is blocked. See "Enforcing the
+# check on a repository" in plugins/security-harness/references/pr-review-mapping.md.
+#
+# Scope: this workflow writes to the pull request and to the commit status. It
+# opens no issues and creates nothing in any external tracker.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read # read the diff
+  pull-requests: write # post the review
+  statuses: write # set security/pr-review
+  id-token: write # required by anthropics/claude-code-action
+
+concurrency:
+  # A new push supersedes the in-flight review. Without this, two reviews of
+  # different commits race and the loser overwrites the winner's status with a
+  # verdict for a stale SHA.
+  group: sh-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Security review
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Fork PRs get a read-only token, so the review could never post and the
+    # status could never be set. Skip rather than fail and leave a red cross on
+    # a contributor's first PR.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The skill diffs against the PR's real merge-base, which needs history.
+          fetch-depth: 0
+
+      - name: Run PR security review
+        uses: ./.github/actions/ai-agent
+        with:
+          agent: ${{ vars.PR_REVIEW_AGENT || 'claude' }}
+          model: ${{ vars.PR_REVIEW_MODEL || '' }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          custom_install: ${{ vars.PR_REVIEW_AGENT_INSTALL }}
+          custom_command: ${{ vars.PR_REVIEW_AGENT_COMMAND }}
+          max_turns: "80"
+          # Bash and gh are needed to fetch the diff, post the review, and set the
+          # status. No WebFetch and no WebSearch: this skill reads the diff and the
+          # repo, and has no reason to reach the network.
+          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash,Task,Skill"
+          prompt: |
+            Run the sh-pr-review skill on pull request #${{ github.event.pull_request.number }}
+            in ${{ github.repository }}.
+
+            Read plugins/security-harness/skills/sh-pr-review/SKILL.md and follow it
+            exactly, including plugins/security-harness/references/pr-review-mapping.md
+            which it names as authoritative.
+
+            Run with --ci and --fail-on=${{ vars.PR_REVIEW_FAIL_ON || 'high' }}.
+            SH_PR_REVIEW_AUTOPOST is set in the environment, so post without prompting.
+
+            Post the result to the pull request itself as one review (event COMMENT)
+            and set the security/pr-review commit status against the head SHA. Do not
+            open issues and do not create tickets or tasks anywhere else.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The double opt-in that lets the skill post without a confirmation
+          # prompt. Both this and --ci are required; either alone falls back to
+          # the gate, and the job would then wait for input it cannot get.
+          SH_PR_REVIEW_AUTOPOST: "1"
+
+      # The skill owns the status on every normal path. This is the backstop for
+      # the case it cannot cover: the job itself dying (timeout, cancellation, a
+      # crashed runner) after the skill set `pending`. A required check stuck on
+      # pending is indistinguishable from a hang and gets the rule deleted.
+      - name: Fail safe the commit status
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          STATE="$(gh api "repos/${{ github.repository }}/commits/$SHA/statuses" \
+            --jq '[.[] | select(.context == "security/pr-review")][0].state // "none"')"
+          echo "Current security/pr-review state: $STATE"
+          if [ "$STATE" = "pending" ] || [ "$STATE" = "none" ]; then
+            gh api "repos/${{ github.repository }}/statuses/$SHA" --method POST \
+              -f state=error -f context=security/pr-review \
+              -f description='Review did not complete: the workflow job failed. Re-run before merging.' \
+              -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Set to error."
+          else
+            echo "Already terminal; leaving it alone."
+          fi

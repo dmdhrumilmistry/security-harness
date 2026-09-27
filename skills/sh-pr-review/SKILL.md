@@ -1,0 +1,394 @@
+---
+name: sh-pr-review
+description: "Security-review a GitHub pull request, post the result as inline review comments on the PR, and set a pass/fail commit status that branch protection can enforce. Fails the PR for vulnerabilities it introduces or makes worse; passes with a warning for pre-existing ones. Triages the diff first and scales depth to risk, dedupes across re-pushes, and never posts without an explicit yes. Use when reviewing a pull request rather than a whole codebase."
+argument-hint: "[PR number, default: PR for current branch] [--tier=0..3] [--deep] [--fail-on=critical|high|medium|low] [--dry-run] [--no-status] [--ci]"
+allowed-tools: Read, Write, Grep, Glob, Bash, Task, Skill
+---
+
+# PR Security Review
+
+## Current state
+
+- Repo: !`gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "(gh unavailable or not a GitHub repo)"`
+- Branch: !`git branch --show-current 2>/dev/null || echo "not a git repo"`
+- PR for this branch: !`gh pr view --json number,title,baseRefName,isDraft,additions,deletions,changedFiles 2>/dev/null || echo "(none, pass a PR number as an argument)"`
+- Timestamp: !`date +%Y-%m-%d-%H%M%S`
+
+## Arguments
+
+$ARGUMENTS
+
+---
+
+You are the PR review orchestrator. Unlike `sh-security-review`, which reviews a whole
+codebase, your job is to **review one pull request and hand the result back to the PR
+itself**.
+
+Three things make this different from a full review, and each matters more than
+coverage:
+
+1. **You hold a merge gate.** The commit status you set can block the branch. That makes
+   a false failure far more expensive than a missed finding. The team's response to a
+   check that cries wolf is to remove it, and then you catch nothing at all.
+2. **Only what the PR is responsible for fails it.** A PR fails for what it *introduced*
+   or *made worse*. Findings that predate it and are untouched by it pass with a warning.
+   Blocking a merge over code the author never wrote is how a required check gets deleted.
+3. **Depth follows risk.** Most PRs touch no security surface at all. Running eight
+   subagents on a docs change is how a review bot gets uninstalled. Triage first, and
+   spend accordingly.
+
+## Read first
+
+- `${CLAUDE_PLUGIN_ROOT}/references/pr-review-mapping.md` is **authoritative** for triage
+  rules, tier definitions, diff anchoring, fingerprints, posting policy, verdict, and the
+  commit status. Read it before Phase 1.
+- `${CLAUDE_PLUGIN_ROOT}/references/finding-schema.json` for the finding shape, including
+  `pr_impact` and `pr_scope_note`.
+- `${CLAUDE_PLUGIN_ROOT}/references/severity-rubric.md` for severity and confidence.
+
+## Authorization
+
+Static analysis of a pull request in a repository the user controls or is authorized to
+review. Nothing is executed against a running application; payloads are constructed from
+source. Do not send source or findings to any external service.
+
+## Flags
+
+- `<number>`: the PR to review. Defaults to the PR for the current branch.
+- `--deep`: force Tier 3 regardless of triage.
+- `--tier=<0..3>`: pin the tier explicitly, overriding triage. Use when you disagree with it.
+- `--dry-run`: do everything except post and except set any status. Write the payload to
+  disk and print it.
+- `--chains`: force chain synthesis on at any tier.
+- `--fail-on=<critical|high|medium|low>`: severity at or above which an introduced or
+  aggravated finding fails the check. Default `medium`. The confidence floor of 80 is
+  fixed and not configurable.
+- `--status-context=<name>`: the commit status context. Default `security/pr-review`.
+  **Changing this orphans any branch protection rule matching the old name.**
+- `--no-status`: post the review but set no commit status. For trying the skill out on a
+  repo where the check is already required.
+- `--ci`: non-interactive posting for automation. **Also requires**
+  `SH_PR_REVIEW_AUTOPOST=1` in the environment. Both must be present; either alone falls
+  back to the confirmation gate.
+
+## Phase 0: resolve the PR
+
+1. `TS` from Current state.
+2. Resolve the PR number: from `$ARGUMENTS` if given, else the one in Current state. If
+   neither resolves, stop and say so. Do not guess and do not fall back to `HEAD~1`.
+3. Fetch PR metadata and keep it:
+
+```
+gh pr view <N> --json number,title,body,author,baseRefName,headRefName,headRefOid,isDraft,additions,deletions,changedFiles,files
+```
+
+4. Fetch the diff **against the PR's real merge-base**, not `HEAD~1`:
+
+```
+gh pr diff <N> --patch > <LOG_DIR>/pr.patch
+```
+
+5. Create the run tree under the harness's usual root so the other skills can still find
+   the run:
+
+```
+mkdir -p .security-harness/pr-<N>-<TS>/{audit,evidence,reports,review}
+```
+
+Remember it as `LOG_DIR`. Substitute the literal path into every delegation prompt.
+
+6. Write `<LOG_DIR>/run.json` with `mode: "pr-review"`, the PR number, `head_sha`
+   (`headRefOid`), `base_ref`, author, and the changed-file list. The `head_sha` is what
+   the posted review is pinned to, so record it.
+7. Initialise `run.md` and `audit/orchestrator.jsonl`.
+8. **Set the status to `pending`** (unless `--no-status` or `--dry-run`), against the head
+   SHA you just recorded:
+
+```
+gh api repos/<OWNER>/<REPO>/statuses/<HEAD_SHA> --method POST \
+  -f state=pending -f context=security/pr-review \
+  -f description='Security review in progress'
+```
+
+Do this now, before any analysis. If the check is already required on this repo, a PR
+with no status at all is blocked on something that looks like a hang. From this point on
+you own that status: **every exit path below must leave it at a terminal state**, never
+`pending`.
+
+**If the PR is a draft**, say so and continue. Drafts are the best time to catch things.
+Just note it in the summary.
+
+**If anything after this point fails**, the diff will not fetch, a hunter crashes,
+assembly throws, set `state=error` with a short reason and stop. `error`, never
+`failure`: a broken review must not accuse the PR of a vulnerability it never found.
+
+## Phase 1: triage (no subagents)
+
+Do this yourself with Bash and Grep. It must cost nothing.
+
+1. Parse `<LOG_DIR>/pr.patch` into changed paths and, for each path, the **added lines**
+   (`+` lines, excluding the `+++` header) with their RIGHT-side line numbers. Write
+   `<LOG_DIR>/review/diff-index.json` per the shape in `pr-review-mapping.md`. This file
+   is what makes inline anchoring possible later: build it once, use it everywhere.
+2. Classify each changed path into vulnerability classes using the path globs **and** the
+   added-line sink-token patterns in `pr-review-mapping.md`. Classes are the same slugs
+   the `sh-kb-*` knowledge bases use.
+3. Assign a tier per the table in `pr-review-mapping.md`. Honour `--deep` and `--tier=`.
+4. Write `<LOG_DIR>/review/triage.json`: the class hits, the line counts, the tier, and
+   **one sentence of reasoning per class that fired**. Append a line to
+   `audit/orchestrator.jsonl`.
+
+### Tier 0: stop here
+
+No security-relevant path and no sink token in any added line. Do not launch a single
+subagent. Write the reports, set the status to `success` with
+`No security-relevant changes in this PR`, and print:
+
+```
+PR #<N>: no security-relevant changes.   status: success
+Triage: <F> files, <A> added / <D> removed lines, no sink tokens in added lines.
+Checked: .security-harness/pr-<N>-<TS>/review/triage.json
+```
+
+Post no comments. A clean PR does not need a bot comment, but it **does** need the
+status, or a required check leaves it stuck. This is a successful outcome, not a skipped
+run.
+
+## Phase 2: scoped recon (Tier 2 and 3 only)
+
+Tier 1 skips this. A single hunter reading the diff and the files it touches is enough,
+and the round-trip is not worth it.
+
+Launch `sh-recon` with the literal `<LOG_DIR>` and:
+
+> Changed files in this PR: <paths>.
+> Scope to: the changed files, their direct importers and callees (2 hops), and any
+> route, middleware, model, or config file they reach. **Do not map the full repo** and
+> do not run a full SBOM pass unless a manifest file is in the changed set.
+> Read `<LOG_DIR>/review/diff-index.json` first; it tells you which lines this PR
+> actually changed.
+> Write `<LOG_DIR>/codebase-map.json` and `<LOG_DIR>/recon.md`.
+
+At Tier 3, also ask `sh-recon` for a `flows` array covering sources and sinks that touch
+changed lines. At Tier 2 the same, folded into the single pass, and note in `run.md` that
+flows were folded into recon.
+
+If the `dependency` class fired, scope recon's SBOM and CVE work to the changed manifest
+files only, and have it report which added or bumped packages carry known CVEs.
+
+## Phase 3: routed hunting
+
+**Launch only the hunters whose class fired in triage.** This is the main cost lever; do
+not launch all fifteen out of habit.
+
+Spawn one `sh-hunter` per fired class, in parallel (one message, multiple Task calls).
+Each hunter loads its own `sh-kb-<class>` knowledge base as it normally does. Every prompt
+carries the literal `<LOG_DIR>`, the class slug, and:
+
+> Read `<LOG_DIR>/review/diff-index.json` first. Your scope is code this PR **added or
+> changed**, plus whatever you must read to judge it.
+>
+> Emit findings per `references/finding-schema.json` to `<LOG_DIR>/findings.jsonl`.
+>
+> Set `pr_impact` on every finding. It decides whether this PR is blocked from merging,
+> so classify deliberately:
+>
+> - `introduced`: the vulnerable line appears in `diff-index.json` as an added line, or
+>   sits in a function containing one.
+> - `aggravated`: the flaw predates the PR, but the PR increases its reachability, weakens
+>   a guard containing it, widens the input surface feeding it, or increases its blast
+>   radius. Set `pr_scope_note` naming the specific change and which criterion it meets.
+>   See "When a finding is `aggravated`" in `pr-review-mapping.md`. It lists the
+>   qualifying criteria, and nothing outside them qualifies.
+> - `pre_existing`: present before and unaffected by this PR. Set `pr_scope_note` to one
+>   sentence on what the PR did to bring it into scope.
+>
+> `introduced` and `aggravated` can block the merge; `pre_existing` never does. **When
+> genuinely unsure between `aggravated` and `pre_existing`, choose `pre_existing`.** A
+> missed aggravation costs a warning someone reads; a false one blocks a merge over code
+> the author did not write, and that is what gets the check switched off.
+>
+> **Do not suppress pre-existing findings, label them.** They are reported separately and
+> never posted inline.
+
+At Tier 1 the single hunter also receives: `No codebase-map.json exists for this run.
+Read the changed files directly.`
+
+## Phase 4: verification (Tier 2 and 3)
+
+Launch `sh-verifier` **only on findings that could be posted**: severity >= medium,
+confidence >= 80, `pr_impact` of `introduced` or `aggravated`. These are exactly the
+findings that can block a merge, so they are the ones worth the adversarial pass.
+
+Give the verifier each finding's `pr_impact` and `pr_scope_note`, and tell it that
+**downgrading a wrong `aggravated` to `pre_existing` is as valuable as rejecting a false
+positive**. Both prevent a merge being blocked for the wrong reason.
+
+Pass the rest through untouched, marked `verification: not_attempted (below posting bar)`.
+
+Tier 1 skips verification entirely. Its findings are reported with their hunter confidence
+and labelled as such in the review body. Do not imply a verification that did not happen.
+
+## Phase 5: chains (Tier 3, or `--chains`, or 4+ findings)
+
+Launch `sh-chainer` as `sh-security-review` does. Otherwise skip and record
+`chains: skipped (tier <N>)` in `run.md`.
+
+## Phase 6: assemble the review
+
+Do this yourself. It is assembly, not analysis.
+
+1. Merge all findings. Group by `pr_impact`: `introduced`, `aggravated`, `pre_existing`.
+
+   If Phase 5 produced a chain with at least one `introduced` member and at least one
+   `pre_existing` member, **promote those pre-existing members to `aggravated`** with a
+   `pr_scope_note` naming the chain. That is the "newly chainable" criterion, and it is
+   the one case the hunters cannot see for themselves, since each works one class and
+   never sees the composed chain.
+2. Compute a fingerprint per finding per `pr-review-mapping.md`. Fingerprints must not
+   include line numbers.
+3. Read back what is already on the PR and drop anything already said:
+
+```
+gh api repos/<OWNER>/<REPO>/pulls/<N>/comments --paginate --jq '.[].body'
+gh api repos/<OWNER>/<REPO>/pulls/<N>/reviews  --paginate --jq '.[].body'
+```
+
+Skip every finding whose fingerprint already appears. Record skips in
+`<LOG_DIR>/review/receipts.jsonl`.
+4. Any fingerprint present on the PR but **absent** from this run is a finding that was
+   fixed. List it under "Resolved since the last review".
+5. Anchor each postable finding to a diff position using `diff-index.json`. Unanchorable
+   findings move to the summary body; never invent a line number to force an inline
+   comment.
+6. Apply the posting policy in `pr-review-mapping.md`: what goes inline, what goes in the
+   body, the inline cap of 10. An `aggravated` finding anchors to the **PR's** line, the
+   change that worsened it, not the pre-existing vulnerable line, which usually sits
+   outside the diff.
+7. **Compute the verdict** per "Verdict and commit status" in `pr-review-mapping.md`:
+
+```
+blocking = findings where pr_impact in (introduced, aggravated)
+                      and severity >= <--fail-on, default medium>
+                      and confidence >= 80
+fail if blocking is non-empty · warn if anything else was reported · pass otherwise
+```
+
+Write `<LOG_DIR>/review/verdict.json`: the verdict, the state it maps to, the threshold
+used, and **every blocking finding with the one line explaining why it blocks**. Someone
+whose merge is blocked will read this file first; it has to answer them without a re-run.
+8. Write `<LOG_DIR>/review/review-payload.json` (the exact GitHub API body) and
+   `<LOG_DIR>/reports/REVIEW.md` (the human-readable copy).
+
+## Phase 7: post and set the status
+
+Posting writes to a shared PR that other people read, and the status can block a merge.
+This is the outward-facing step.
+
+1. **Print the review and the verdict first.** Inline comments with their file:line, the
+   summary body, the counts (posted, deduped, aggravated, pre-existing, unanchorable),
+   and, stated plainly, **the verdict and what it will do to the check**.
+2. **Ask, and wait.** Nothing is posted until an explicit yes. Silence, a question, or
+   hesitation is a no. Record `confirmation: declined`, keep the payload on disk, and tell
+   the user it can be posted later.
+3. `--dry-run` stops here and says the payload was not posted.
+4. `--ci` skips the prompt **only when `SH_PR_REVIEW_AUTOPOST=1` is also set**. If the
+   flag is present but the variable is not, fall back to the gate and say why.
+5. On yes, post **one review in one call** so it lands as a single review, not N
+   notifications:
+
+```
+gh api repos/<OWNER>/<REPO>/pulls/<N>/reviews --method POST --input <LOG_DIR>/review/review-payload.json
+```
+
+6. **Set the final commit status** (unless `--no-status`), against the same head SHA,
+   using the description templates in `pr-review-mapping.md`:
+
+```
+gh api repos/<OWNER>/<REPO>/statuses/<HEAD_SHA> --method POST \
+  -f state=<success|failure|error> -f context=<--status-context, default security/pr-review> \
+  -f description='<140 chars or fewer>' -f target_url='<posted review URL, else the run directory>'
+```
+
+Set the status **after** the review posts, so `target_url` can point at it. If posting
+failed but analysis succeeded, still set the status, with `target_url` pointing at the run
+directory and a description saying the review body could not be posted. A verdict you
+computed and then dropped on the floor is worse than no check.
+
+7. Append a receipt per posted comment to `<LOG_DIR>/review/receipts.jsonl`, and the
+   review URL, status state, and description to `run.md`.
+
+**The review event is always `COMMENT`.** Never `REQUEST_CHANGES` or `APPROVE`. The commit
+status is the enforcement mechanism, and it is the one branch protection reads. Using a
+blocking review event on top would double-gate the PR with something no rule can see and
+no bot should own.
+
+If the POST fails, report the HTTP status and body verbatim, keep the payload, and do not
+retry blindly. A 422 almost always means a line is outside the diff, which is a bug in
+anchoring, not a transient error. Move that finding to the body and repost once; never
+shift a line number to make it fit.
+
+## Final step
+
+1. Concatenate `<LOG_DIR>/audit/*.jsonl` into `audit-trail.jsonl`; verify each line parses.
+2. Mark `run.md` complete with the tier, the subagents actually launched, and the totals.
+3. Print:
+
+```
+PR #<N> security review: <VERDICT>   status: <state> (security/pr-review)
+
+<For fail: the blocking findings, one line each, with why each blocks.>
+
+Introduced:   <I>   <- blocks the merge
+Aggravated:   <A>   <- blocks the merge
+Pre-existing: <X>   <- reported, does not block
+Deduped:      <D> (already raised on an earlier push)
+Resolved:     <R> since last review
+
+Critical <C> · High <H> · Medium <M> · Low <L>   (threshold: --fail-on=<T>)
+
+Posted:  <P> inline + 1 summary   <review url>
+Verdict: .security-harness/pr-<N>-<TS>/review/verdict.json
+Review:  .security-harness/pr-<N>-<TS>/reports/REVIEW.md
+Audit:   .security-harness/pr-<N>-<TS>/audit-trail.jsonl
+```
+
+On a **fail**, say plainly what the author has to do: fix the introduced and aggravated
+findings and push, which re-runs the check. Do not leave them to infer it from a red cross.
+
+If the repo does not yet require this check, add one line after the summary:
+*"`security/pr-review` is not a required check on this repo. See 'Enforcing the check' in
+pr-review-mapping.md to make it one."* Say it once, not on every run.
+
+## Important
+
+- **Never leave a status at `pending`.** Once Phase 0 sets it you own it, and every exit
+  path, including a crash, must reach `success`, `failure`, or `error`. A stuck `pending`
+  on a required check is indistinguishable from a dead runner, and it gets the check
+  disabled.
+- **`error` for a broken run, `failure` only for a real finding.** Conflating them teaches
+  people to ignore red.
+- **`pre_existing` never fails a PR.** This is the rule that keeps the check installed.
+  When in doubt between `aggravated` and `pre_existing`, pick `pre_existing`.
+- **Triage is not optional.** Tier 0 exists to make the common case free, but it still
+  sets the status, or a required check leaves the PR stuck.
+- **Inline comments only on lines this PR changed.** Anything else is unanchorable by
+  definition and belongs in the body.
+- **Pre-existing findings are labelled, never hidden and never inline.** The PR author did
+  not write them and should not be asked to fix them to merge.
+- **Dedup before posting, every time.** A re-review after a push must add only what is new.
+- **Respect the inline cap.** Past it, summarise. A wall of bot comments is worse than a
+  short list.
+- **Never imply execution.** Nothing is run against a live application; payloads are
+  constructed from source.
+- **The PR is the only place output goes.** Post review comments and set the commit
+  status. Do **not** open issues, and do not create tickets or tasks in any external
+  tracker. A finding that outlives the PR is a human's call to track, not this skill's.
+
+## Refer to
+
+- `${CLAUDE_PLUGIN_ROOT}/references/pr-review-mapping.md`: triage rules, tiers, anchoring,
+  fingerprints, posting policy, verdict, commit status, payload shape
+- `${CLAUDE_PLUGIN_ROOT}/references/finding-schema.json`: the finding shape every hunter emits
+- `${CLAUDE_PLUGIN_ROOT}/references/severity-rubric.md`: severity and confidence
+- `sh-security-review`: the whole-codebase pipeline this skill borrows its agents from
