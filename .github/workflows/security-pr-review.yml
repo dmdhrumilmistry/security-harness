@@ -47,6 +47,12 @@ jobs:
         uses: ./.github/actions/ai-agent
         with:
           agent: ${{ vars.PR_REVIEW_AGENT || 'claude' }}
+          # Without this the action swaps its OIDC token for a Claude App token,
+          # and that exchange refuses to mint one while the calling workflow is
+          # new or modified in the PR under review. The job then exits as a
+          # no-op success, which is worse than failing. The permissions block
+          # above already grants exactly what the review needs.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           model: ${{ vars.PR_REVIEW_MODEL || '' }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -80,26 +86,46 @@ jobs:
           # the gate, and the job would then wait for input it cannot get.
           SH_PR_REVIEW_AUTOPOST: "1"
 
-      # The skill owns the status on every normal path. This is the backstop for
-      # the case it cannot cover: the job itself dying (timeout, cancellation, a
-      # crashed runner) after the skill set `pending`. A required check stuck on
-      # pending is indistinguishable from a hang and gets the rule deleted.
+      # The skill owns the status on every normal path. This backstop covers the
+      # two cases it cannot:
+      #
+      #   1. The job dies (timeout, cancellation, crashed runner) after the skill
+      #      set `pending`.
+      #   2. The agent step exits as a no-op *success* without ever running, and
+      #      the job goes green having set no status at all. claude-code-action
+      #      does exactly this when it cannot mint an App token, which happens
+      #      while this workflow file is itself new or modified in the PR under
+      #      review. Passing github_token above avoids that path, but a green job
+      #      with a silently missing required check is bad enough to guard twice.
+      #
+      # Hence `always()` and a check for `none` as well as `pending`. A required
+      # check that never reports is indistinguishable from a hang and gets the
+      # rule deleted, which is the failure mode worth the most paranoia.
       - name: Fail safe the commit status
-        if: failure() || cancelled()
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.event.pull_request.head.sha }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           set -euo pipefail
           STATE="$(gh api "repos/${{ github.repository }}/commits/$SHA/statuses" \
             --jq '[.[] | select(.context == "security/pr-review")][0].state // "none"')"
-          echo "Current security/pr-review state: $STATE"
-          if [ "$STATE" = "pending" ] || [ "$STATE" = "none" ]; then
-            gh api "repos/${{ github.repository }}/statuses/$SHA" --method POST \
-              -f state=error -f context=security/pr-review \
-              -f description='Review did not complete: the workflow job failed. Re-run before merging.' \
-              -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo "Set to error."
-          else
-            echo "Already terminal; leaving it alone."
+          echo "Job status: $JOB_STATUS | security/pr-review state: $STATE"
+
+          if [ "$STATE" != "pending" ] && [ "$STATE" != "none" ]; then
+            echo "Status is already terminal ($STATE). Leaving it alone."
+            exit 0
           fi
+
+          if [ "$JOB_STATUS" = "success" ]; then
+            DESC='Review did not run: the agent step was skipped. Re-run before merging.'
+          else
+            DESC='Review did not complete: the workflow job failed. Re-run before merging.'
+          fi
+
+          gh api "repos/${{ github.repository }}/statuses/$SHA" --method POST \
+            -f state=error -f context=security/pr-review \
+            -f description="$DESC" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "Set security/pr-review to error: $DESC"
