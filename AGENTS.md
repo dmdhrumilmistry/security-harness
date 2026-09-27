@@ -58,7 +58,7 @@ skills/                             # GENERATED mirror of the canonical skills
 scripts/sync-agent-skills.py        # regenerates that mirror
 docs/DISTRIBUTION.md                # packaging and public-listing steps
 .github/actions/ai-agent/           # pluggable agent runner (claude | codex | gemini | custom)
-.github/workflows/                  # KB stage 1 (open PR), stage 2 (review and merge), PR security review
+.github/workflows/                  # KB stage 1 (open PR), stage 2 (review and merge)
 .github/kb-update/                  # prompts and trusted-source allowlist for the KB updater
 ```
 

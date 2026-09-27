@@ -41,9 +41,15 @@ review PR 42
 
 ## Pull request review
 
-`sh-pr-review` reviews one pull request instead of a whole codebase. It posts findings as
-inline comments on the PR and sets a `security/pr-review` commit status that branch
-protection can enforce.
+`sh-pr-review` reviews one pull request instead of a whole codebase. Run it on your own
+machine, in any repo `gh` can see. It posts findings as inline comments on the PR and
+sets a `security/pr-review` commit status that branch protection can enforce, and it
+always asks before posting anything.
+
+```
+review PR 42
+sh-pr-review 128 --fail-on=high
+```
 
 A PR fails only for what it `introduced` or `aggravated`. Findings that predate it are
 reported and never block. Triage runs first with no subagents, so a PR with no security

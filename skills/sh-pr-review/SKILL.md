@@ -46,6 +46,48 @@ coverage:
   `pr_impact` and `pr_scope_note`.
 - `${CLAUDE_PLUGIN_ROOT}/references/severity-rubric.md` for severity and confidence.
 
+## Where this runs
+
+**Primarily on a developer's own machine, against a PR in whatever repository they are
+working in.** That is the default and the design centre: the user runs it, reads the
+findings, and decides whether to post. Phase 7 asks before writing anything to the PR,
+and a decline is a normal outcome, not a failure.
+
+It works in any repository `gh` can see. Nothing about it is specific to the harness's
+own repo. The run directory is written under the *target* repository's working tree.
+
+Running it unattended in CI is possible but optional, and a separate decision. See
+"Enforcing the check on a repository" in `pr-review-mapping.md`.
+
+### Before you start, check what the user can actually do
+
+The skill writes two things: a review on the PR, and a commit status. A user reviewing
+someone else's repository may be able to do neither.
+
+```
+gh api repos/<OWNER>/<REPO> --jq '.permissions'
+```
+
+- `push` or `maintain` or `admin`: both the review and the status will work.
+- `pull` only (or no `permissions` field at all): posting will 403. Say so **up front**,
+  before spending a single subagent, and offer to run with `--no-status` and print the
+  review for the user to paste, or to stop.
+
+Do not discover this at Phase 7 after ten minutes of analysis.
+
+### Keep the run directory out of their repo
+
+The run tree lands in the target repository's working tree. Before writing to it, check
+whether `.security-harness/` is ignored:
+
+```
+git check-ignore -q .security-harness && echo ignored || echo NOT ignored
+```
+
+If it is not ignored, say so once and offer to add it to `.git/info/exclude`, which is
+local and does not dirty the repo's own `.gitignore`. Never commit the run directory,
+and never add it to a PR you are reviewing.
+
 ## Authorization
 
 Static analysis of a pull request in a repository the user controls or is authorized to
@@ -65,9 +107,12 @@ source. Do not send source or findings to any external service.
   fixed and not configurable.
 - `--status-context=<name>`: the commit status context. Default `security/pr-review`.
   **Changing this orphans any branch protection rule matching the old name.**
-- `--no-status`: post the review but set no commit status. For trying the skill out on a
-  repo where the check is already required.
-- `--ci`: non-interactive posting for automation. **Also requires**
+- `--no-status`: post the review but set no commit status. Use it when the user lacks
+  `statuses: write` on the repo, or when trying the skill out somewhere the check is
+  already required.
+- `--ci`: non-interactive posting, for a CI runner only. Not for interactive use: it
+  removes the confirmation gate, which is the main safety property when a human is
+  driving. **Also requires**
   `SH_PR_REVIEW_AUTOPOST=1` in the environment. Both must be present; either alone falls
   back to the confirmation gate.
 

@@ -146,13 +146,22 @@ code-level mitigation.
 result as inline comments **on the PR itself**, and sets a `security/pr-review` commit
 status that branch protection can enforce.
 
+**Run it from your own machine, in whatever repo you are working in.** Install the
+plugin, open a repo with a PR, and ask:
+
 ```
 review PR 42
 security review this PR
+sh-pr-review 128 --fail-on=high
 ```
 
-or from CI, via [`.github/workflows/security-pr-review.yml`](.github/workflows/security-pr-review.yml),
-which runs on every `opened`, `synchronize`, `reopened`, and `ready_for_review` event.
+It works in any repository `gh` can see. Nothing about it is specific to this repo.
+Phase 7 prints the findings and the verdict and **asks before posting anything** - a
+decline is a normal outcome, and the payload stays on disk for you to post later.
+
+Before spending any analysis it checks whether you can actually write to the repo, so
+reviewing someone else's project tells you up front that posting will 403 rather than
+discovering it ten minutes in.
 
 Three properties make it usable as a merge gate rather than noise:
 
@@ -186,11 +195,17 @@ status is the enforcement mechanism, and it is the one branch protection reads.
 **Scope:** the skill writes to the pull request and the commit status, and nowhere else.
 It opens no issues and creates nothing in any external tracker.
 
-The status is advisory until you require it. To make it a gate, see "Enforcing the check
-on a repository" in
-[`references/pr-review-mapping.md`](plugins/security-harness/references/pr-review-mapping.md).
-Start at `--fail-on=high` on a codebase that has never been scanned, and tighten once the
-backlog is clear.
+### Running it unattended
+
+Optional, and a separate decision from using the skill. Run it by hand on your own PRs
+for a while first, so you know what it says about your codebase before it says it in
+front of your team.
+
+When you are ready, "Enforcing the check on a repository" in
+[`references/pr-review-mapping.md`](plugins/security-harness/references/pr-review-mapping.md)
+has a copy-paste workflow for **your** repo, plus the two things that decide whether the
+check survives: a fail-safe so a dead job never leaves a required check stuck on
+`pending`, and starting at `--fail-on=high` on a codebase that has never been scanned.
 
 ## How it works
 

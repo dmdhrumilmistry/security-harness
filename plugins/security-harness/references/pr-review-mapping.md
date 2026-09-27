@@ -412,20 +412,74 @@ only. If the POST failed, `REVIEW.md` says the review was not posted.
 A commit status only gates a merge once branch protection requires it. Two steps,
 in this order, and the order matters.
 
+This is optional, and it is a separate decision from using the skill. Most people
+should run `sh-pr-review` from their own machine on their own PRs for a while
+first. Automate it only once you know what it says about your codebase.
+
 ### 1. Let it report on every PR first
 
 Before requiring the check, make sure something sets it on every pull request. A
 required status that nothing reports leaves every PR blocked on a check that
 never arrives, and the first fix anyone reaches for is deleting the rule.
 
-The workflow that does this is
-`.github/workflows/security-pr-review.yml`. It runs on
-`pull_request: [opened, synchronize, reopened]` with `contents: read`,
-`pull-requests: write`, and `statuses: write`, and it uses
-`concurrency.cancel-in-progress` so a new push supersedes the in-flight review.
+Drop this into your own repository as
+`.github/workflows/security-pr-review.yml`:
+
+```yaml
+name: Security PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read # read the diff
+  pull-requests: write # post the review
+  statuses: write # set security/pr-review
+
+concurrency:
+  group: sh-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A fork PR gets a read-only token, so the review could never post and the
+    # status could never be set. Skip rather than leave a red cross on a
+    # contributor's first PR.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the merge-base needs full history
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Pass this explicitly. Without it the action swaps its OIDC token for
+          # a Claude App token, and that exchange refuses to mint one while the
+          # calling workflow is itself new or modified in the PR under review.
+          # The step then exits as a *success* having done nothing.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: '--max-turns 80 --allowedTools "Read,Write,Edit,Glob,Grep,Bash,Task,Skill"'
+          prompt: |
+            Run the sh-pr-review skill on pull request
+            #${{ github.event.pull_request.number }} with --ci --fail-on=high.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SH_PR_REVIEW_AUTOPOST: "1"
+```
 
 `cancel-in-progress` matters: without it, two reviews of different commits race,
 and the loser overwrites the winner's status with a verdict for a stale SHA.
+
+**Add a fail-safe if you make the check required.** The skill sets `pending`
+before it analyses anything and owns every exit path after that, but it cannot
+cover the job itself dying, or the agent step exiting as a no-op success. Either
+leaves a required check stuck with no terminal status, which is
+indistinguishable from a hang and is what gets the rule deleted. A final step
+with `if: always()` that reads the current status and posts `error` when it finds
+`pending` or nothing closes that gap.
 
 ### 2. Require it
 
