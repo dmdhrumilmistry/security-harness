@@ -64,6 +64,15 @@ byte-identical re-stamps the previous verdict onto the new head SHA without laun
 anything. Invalidation is conservative: the cache key hashes every knowledge base, so a KB
 update re-scans everything rather than risk a stale "clean".
 
+The review and the commit status are **posted by default** (`--confirm` to be asked first,
+`--dry-run` to send nothing). Posting runs through `scripts/sh-pr-post.py`, which does the
+whole sequence or says which part failed, and never leaves the status stuck on `pending`.
+
+`scripts/sh-metrics.py` records what every run cost - model, tokens, duration, cache reuse
+- to append-only JSONL under your own data directory. `sh-metrics.py path` prints where,
+`report` aggregates, `purge` deletes. Strictly local: no network code, no endpoint, and
+anything token-shaped is redacted before it is written.
+
 It writes to the pull request and the commit status only. It opens no issues and creates
 nothing in any external tracker.
 

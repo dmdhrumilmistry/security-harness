@@ -235,6 +235,50 @@ content and a 7-day TTL all invalidate too, and an unspecified model is treated 
 what was launched, reused and skipped, so a cache that quietly stops hitting is visible
 rather than assumed.
 
+### Posting, and where things are written
+
+**The review and the commit status are posted by default.** A review that was computed and
+never delivered helped nobody. `--confirm` restores a prompt before posting, `--dry-run`
+sends nothing, `--no-status` posts the review but leaves the commit status alone.
+
+Posting goes through `scripts/sh-pr-post.py` rather than hand-built API calls, because it
+is a multi-step operation with a mandatory tail: review, then status, then receipts, with
+a 422 recovered by moving the comment rather than shifting a line number. The script
+**never exits leaving the status at `pending`** - if the review cannot be posted it still
+sets `error`, saying the tooling failed rather than accusing the PR.
+
+Inline comments are reserved for findings at **medium or above** with confidence >= 80.
+Low-severity findings go in the collapsed body section, so a low-priority finding showing
+up with zero inline comments is the policy working, not a failure.
+
+### Local run metrics
+
+Every run records what it cost, so "the cache is working" and "reviews got slower" stop
+being matters of opinion.
+
+```bash
+python <skill>/scripts/sh-metrics.py path      # where records live
+python <skill>/scripts/sh-metrics.py report    # aggregate, by model
+python <skill>/scripts/sh-metrics.py purge --older-than-days 30
+```
+
+Two append-only JSONL files - `runs.jsonl` (repo, PR, tier, verdict, totals, the flags you
+passed) and `events.jsonl` (one line per phase or agent: model, tokens, duration, outcome,
+whether it was reused from cache). JSONL so a crashed run still leaves valid lines above
+the crash.
+
+| Platform | Metrics | Cache |
+|---|---|---|
+| Windows | `%LOCALAPPDATA%\security-harness\metrics` | `%LOCALAPPDATA%\security-harness\cache` |
+| macOS | `~/Library/Application Support/security-harness/metrics` | `~/Library/Caches/security-harness` |
+| other | `$XDG_DATA_HOME/security-harness/metrics` | `$XDG_CACHE_HOME/security-harness` |
+
+Override with `SH_METRICS_DIR` and `SH_REVIEW_CACHE_DIR`.
+
+**Strictly local.** Neither script contains any network code or reporting endpoint.
+Anything token-shaped is redacted before it is written, because local files get pasted
+into issues.
+
 ### Running it unattended
 
 Optional, and a separate decision from using the skill. Run it by hand on your own PRs

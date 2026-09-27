@@ -228,7 +228,17 @@ directory into the worktree. Substitute the literal path into every delegation p
 8. Write `<LOG_DIR>/run.json` with `mode: "pr-review"`, the PR number, `head_sha`
    (`headRefOid`), `base_ref`, author, and the changed-file list. The `head_sha` is what
    the posted review is pinned to, so record it.
-9. Initialise `run.md` and `audit/orchestrator.jsonl`.
+9. Initialise `run.md` and `audit/orchestrator.jsonl`, and **open a metrics run**:
+
+```
+METRICS="<skill dir>/scripts/sh-metrics.py"
+python "$METRICS" start --run-id "pr-$N-$TS" --repo "$REPO" --pr "$N" \n  --tier <tier> --cache "<hit | miss: reason>" --arguments "<the flags the user passed>"
+```
+
+Metrics are **local only**. The script has no network code and no endpoint; records land
+under your own data directory and stay there. `sh-metrics.py path` prints where, and
+`purge` deletes them. Anything token-shaped in the arguments is redacted before it is
+written, because local files get pasted into issues.
 10. **Set the status to `pending`** (unless `--no-status` or `--dry-run`), against the head
    SHA you just recorded:
 
@@ -414,6 +424,16 @@ Two rules that keep this honest:
   and reporting a finding against a file that no longer exists is how a reviewer learns
   to distrust the tool.
 
+**Record every agent you launch**, as it finishes:
+
+```
+python "$METRICS" event --run-id "pr-$N-$TS" --phase hunt --agent sh-hunter \n  --vuln-class <class> --model <model> --duration-ms <ms> --status <ok|failed>
+```
+
+Add `--reused` instead of launching anything when a class's findings were carried forward
+from the cache, so a cheap run is distinguishable from a run that did nothing. Do the same
+in Phases 2, 4 and 5 with `--phase recon|verify|chain`.
+
 Spawn one `sh-hunter` per fired class, in parallel (one message, multiple Task calls).
 Each hunter loads its own `sh-kb-<class>` knowledge base as it normally does. Every prompt
 carries the literal `<LOG_DIR>`, the class slug, the file list it is scoped to, the
@@ -537,38 +557,41 @@ whose merge is blocked will read this file first; it has to answer them without 
 Posting writes to a shared PR that other people read, and the status can block a merge.
 This is the outward-facing step.
 
-1. **Print the review and the verdict first.** Inline comments with their file:line, the
+**Posting is the default.** A review that was computed and never delivered helped nobody,
+and the commonest way that happened was a confirmation step nobody answered. `--confirm`
+restores the prompt; `--dry-run` still sends nothing.
+
+1. **Print the review and the verdict first**, so the user sees what went out even though
+   they are not being asked to approve it: inline comments with their file:line, the
    summary body, the counts (posted, deduped, aggravated, pre-existing, unanchorable),
    and, stated plainly, **the verdict and what it will do to the check**.
-2. **Ask, and wait.** Nothing is posted until an explicit yes. Silence, a question, or
-   hesitation is a no. Record `confirmation: declined`, keep the payload on disk, and tell
-   the user it can be posted later.
-3. `--dry-run` stops here and says the payload was not posted.
-4. `--ci` skips the prompt **only when `SH_PR_REVIEW_AUTOPOST=1` is also set**. If the
-   flag is present but the variable is not, fall back to the gate and say why.
-5. On yes, post **one review in one call** so it lands as a single review, not N
-   notifications:
+
+2. **Post with the script**, not by hand:
 
 ```
-gh api repos/$REPO/pulls/$N/reviews --method POST --input <LOG_DIR>/review/review-payload.json
+python "<skill dir>/scripts/sh-pr-post.py" post \
+  --repo "$REPO" --pr "$N" \
+  --payload <LOG_DIR>/review/review-payload.json \
+  --verdict <LOG_DIR>/review/verdict.json \
+  --receipts <LOG_DIR>/review/receipts.jsonl
 ```
 
-6. **Set the final commit status** (unless `--no-status`), against the same head SHA,
-   using the description templates in `pr-review-mapping.md`:
+Posting is a multi-step operation with a mandatory tail: the review goes up, the status
+must follow, receipts must be written, and a 422 must be recovered from by moving a
+comment rather than shifting a line number. Done by hand the step that gets skipped is
+usually the status, which is the one a branch protection rule depends on. The script does
+all of it or reports exactly which part failed, and **never exits leaving the status at
+`pending`**: if the review cannot be posted it still sets `error`, with a description
+saying the tooling failed rather than accusing the PR of a finding it never made.
 
-```
-gh api repos/$REPO/statuses/$HEAD_SHA --method POST \
-  -f state=<success|failure|error> -f context=<--status-context, default security/pr-review> \
-  -f description='<140 chars or fewer>' -f target_url='<posted review URL, else the run directory>'
-```
+It refuses any review event other than `COMMENT`, so `REQUEST_CHANGES` cannot slip in
+through a hand-built payload.
 
-Set the status **after** the review posts, so `target_url` can point at it. If posting
-failed but analysis succeeded, still set the status, with `target_url` pointing at the run
-directory and a description saying the review body could not be posted. A verdict you
-computed and then dropped on the floor is worse than no check.
+Pass `--dry-run` through for a dry run, `--no-status` to skip the status, and
+`--status-context` if it was overridden.
 
-7. Append a receipt per posted comment to `<LOG_DIR>/review/receipts.jsonl`, and the
-   review URL, status state, and description to `run.md`.
+3. Record the review URL, status state and description in `run.md`. Take the URL from the
+   script's output only. **Never write a comment URL the API did not return.**
 
 **The review event is always `COMMENT`.** Never `REQUEST_CHANGES` or `APPROVE`. The commit
 status is the enforcement mechanism, and it is the one branch protection reads. Using a
@@ -608,6 +631,17 @@ write them by hand: the point of computing them there is that they cannot drift 
 the next `get` checks.
 
 ## Final step
+
+0. **Close the metrics run.** Do this even when the run failed, was declined, or stopped
+   at Tier 0: a run that never finishes is exactly the one worth being able to count.
+
+```
+python "$METRICS" finish --run-id "pr-$N-$TS" --verdict <verdict> --status-state <state> \n  --findings <n> --posted <n> --deduped <n> --reused-files <n> --reused-verdicts <n> \n  --agents-launched <n> --duration-ms <ms>
+```
+
+   Add `--tokens-in`, `--tokens-out` and `--cost-usd` when the harness surfaces them. Omit
+   them rather than guessing: an invented cost figure is worse than a missing one, because
+   it will be used to make a decision.
 
 1. Concatenate `<LOG_DIR>/audit/*.jsonl` into `audit-trail.jsonl`; verify each line parses.
 2. Mark `run.md` complete with the tier, the subagents actually launched, and the totals.

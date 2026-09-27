@@ -223,6 +223,51 @@ Ten inline comments is already a lot to answer in one sitting.
 hunter confidence, not independently verified."* Never present an unverified
 finding as verified.
 
+### How to write the comment
+
+The reader is a developer with the diff open who has thirty seconds. They need to know
+what is wrong, whether it is real, and what to type instead. Everything else is in the
+way.
+
+**Lead with the mechanism, not the category.** "This is a potential security
+vulnerability" tells them nothing they cannot see from the label. "`order_id` goes
+straight into the SQL string, so `1 OR 1=1` returns every order" tells them what happens.
+
+**Name the actual things.** The parameter, the function, the route, the line. A comment
+that could be pasted onto any file in any repo is a comment nobody acts on.
+
+**Show the fix as code.** Two lines of the corrected call beat a paragraph describing it.
+
+**Say how it is reached.** A finding with no route to it is a finding the author will
+argue with, correctly. One clause is enough: "reachable from `PATCH /leads/{id}`, which
+is authenticated but not admin-only".
+
+### Things that read as slop, and what to write instead
+
+| Do not write | Write |
+|---|---|
+| "Great catch on the refactor! However..." | nothing, start with the finding |
+| "I've analyzed this PR and identified..." | nothing, the comment's presence says that |
+| "This could potentially lead to a possible security issue" | "This lets any logged-in user read another tenant's invoices" |
+| "It is recommended that proper validation be implemented" | "Validate with `_validate_custom_fields_on_write` before the write, as `update_lead` already does" |
+| "Consider using parameterized queries as a best practice" | `cursor.execute("... WHERE id = %s", (order_id,))` |
+| "This may or may not be exploitable depending on context" | either state the precondition, or drop the finding |
+| "Let me know if you have any questions!" | nothing |
+| "🔒 **Security Issue** 🚨" | "**High** - CWE-89" |
+
+**No emoji. No greeting. No sign-off. No offer to help.** No restating what the diff does
+before saying what is wrong with it: the author wrote it.
+
+**No hedging stacks.** "could potentially possibly" is three hedges doing the work of
+none. If confidence is genuinely low, the confidence number already says so and the
+posting policy has already routed it to the body.
+
+**Do not pad to look thorough.** A two-sentence comment that is right is worth more than
+six sentences around the same fact. The detail belongs in `REVIEW.md`.
+
+**Write in plain words.** "An attacker can read other customers' data" over "this
+introduces a confidentiality boundary violation".
+
 ### Inline comment body
 
 ````markdown
