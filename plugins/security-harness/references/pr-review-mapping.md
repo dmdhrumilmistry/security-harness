@@ -325,7 +325,7 @@ App installation token; `gh auth` issues a user token and the call returns 403.
 Statuses work with both, and are what branch protection consumes anyway.
 
 ```
-gh api repos/<OWNER>/<REPO>/statuses/<HEAD_SHA> \
+gh api repos/$REPO/statuses/$HEAD_SHA \
   --method POST \
   -f state=<pending|success|failure|error> \
   -f context=security/pr-review \
@@ -384,7 +384,7 @@ than N separate notifications.
 ```
 
 ```
-gh api repos/<OWNER>/<REPO>/pulls/<N>/reviews --method POST --input <LOG_DIR>/review/review-payload.json
+gh api repos/$REPO/pulls/$N/reviews --method POST --input <LOG_DIR>/review/review-payload.json
 ```
 
 - `commit_id` pins the review to the head SHA that was actually analysed. Without

@@ -146,21 +146,26 @@ code-level mitigation.
 result as inline comments **on the PR itself**, and sets a `security/pr-review` commit
 status that branch protection can enforce.
 
-**Run it from your own machine, in whatever repo you are working in.** Install the
-plugin, open a repo with a PR, and ask:
+**Run it from your own machine, on any PR you can read.** Install the plugin and ask:
 
 ```
+review https://github.com/acme/api/pull/128
 review PR 42
 security review this PR
-sh-pr-review 128 --tier=3
 ```
 
-It works in any repository `gh` can see. Nothing about it is specific to this repo.
+**Paste a PR link** and it reviews that PR in that repository, cloning it to a temporary
+directory first, because the hunters read files and not just the patch. Nothing is
+written into the repo you are working in.
+
+**Pass a bare number** and it resolves against **the repo you are currently in**, the one
+`git remote` points at. Pass nothing and it takes the open PR for your current branch.
+
 Phase 7 prints the findings and the verdict and **asks before posting anything** - a
 decline is a normal outcome, and the payload stays on disk for you to post later.
 
-Before spending any analysis it checks whether you can actually write to the repo, so
-reviewing someone else's project tells you up front that posting will 403 rather than
+Before spending any analysis it checks whether you can actually write to the target repo,
+so reviewing someone else's project tells you up front that posting will 403 rather than
 discovering it ten minutes in.
 
 Three properties make it usable as a merge gate rather than noise:
