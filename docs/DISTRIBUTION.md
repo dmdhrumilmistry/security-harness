@@ -21,8 +21,8 @@ One canonical copy of the skills, mirrored where each ecosystem looks for them.
 Regenerate the mirror after any skill edit:
 
 ```bash
-python scripts/sync-agent-skills.py
-python scripts/sync-agent-skills.py --check   # CI-friendly, non-zero if stale
+python3 scripts/sync-agent-skills.py
+python3 scripts/sync-agent-skills.py --check   # CI-friendly, non-zero if stale
 ```
 
 ## Per-ecosystem support
@@ -56,7 +56,7 @@ source of truth for every agent. For the skills, copy them into a discovery
 directory:
 
 ```bash
-python scripts/sync-agent-skills.py --install agents
+python3 scripts/sync-agent-skills.py --install agents
 ```
 
 ### opencode and other agentskills.io agents
@@ -66,10 +66,10 @@ opencode discovers `SKILL.md` from `.agents/skills/`, `~/.agents/skills/`,
 `~/.config/opencode/skills/`. The `--install` flag writes to whichever you want:
 
 ```bash
-python scripts/sync-agent-skills.py --install agents     # ~/.agents/skills
-python scripts/sync-agent-skills.py --install opencode   # ~/.config/opencode/skills
-python scripts/sync-agent-skills.py --install claude     # ~/.claude/skills
-python scripts/sync-agent-skills.py --install agents --scope workspace
+python3 scripts/sync-agent-skills.py --install agents     # ~/.agents/skills
+python3 scripts/sync-agent-skills.py --install opencode   # ~/.config/opencode/skills
+python3 scripts/sync-agent-skills.py --install claude     # ~/.claude/skills
+python3 scripts/sync-agent-skills.py --install agents --scope workspace
 ```
 
 `~/.agents/skills/` is the interoperable path, so prefer it unless a specific
@@ -148,8 +148,8 @@ make some of these unnecessary.
 
 ## Release checklist
 
-1. `python scripts/sync-agent-skills.py --check`
+1. `python3 scripts/sync-agent-skills.py --check`
 2. Version matches in `plugins/security-harness/.claude-plugin/plugin.json`,
    `.claude-plugin/marketplace.json`, and `gemini-extension.json`
-3. No em dashes: `python -c "import sys,os;[sys.exit('dash in '+os.path.join(r,f)) for r,d,fs in os.walk('.') if '.git' not in r for f in fs if any(c in open(os.path.join(r,f),encoding='utf-8',errors='ignore').read() for c in map(chr,(0x2014,0x2013,0x2015)))]"`
+3. No em dashes: `python3 -c "import sys,os;[sys.exit('dash in '+os.path.join(r,f)) for r,d,fs in os.walk('.') if '.git' not in r for f in fs if any(c in open(os.path.join(r,f),encoding='utf-8',errors='ignore').read() for c in map(chr,(0x2014,0x2013,0x2015)))]"`
 4. Tag and release with the same version as the manifests

@@ -61,8 +61,8 @@ skills into a discovery directory. Codex additionally picks up `AGENTS.md` on it
 ```bash
 git clone https://github.com/dmdhrumilmistry/security-harness
 cd security-harness
-python scripts/sync-agent-skills.py --install agents     # ~/.agents/skills
-python scripts/sync-agent-skills.py --install opencode   # ~/.config/opencode/skills
+python3 scripts/sync-agent-skills.py --install agents     # ~/.agents/skills
+python3 scripts/sync-agent-skills.py --install opencode   # ~/.config/opencode/skills
 ```
 
 **Graft is installed and set up automatically by the pipeline.** Stage 0 runs `npm install -g
@@ -199,6 +199,94 @@ status is the enforcement mechanism, and it is the one branch protection reads.
 
 **Scope:** the skill writes to the pull request and the commit status, and nowhere else.
 It opens no issues and creates nothing in any external tracker.
+
+### Re-reviews are incremental
+
+A PR gets reviewed once per push, so the second review has to be cheaper than the first or
+the tool becomes something people turn off.
+
+**Dedup happens before the spending, not before the posting.** The fingerprints already on
+the PR are read in Phase 1 and handed to the hunters and the verifier. Finding a duplicate
+at the end would mean the most expensive model in the pipeline had already re-confirmed a
+conclusion that was written on the PR the whole time. This needs no cache: the state lives
+in the PR, so it works on a cold machine and in CI.
+
+**A local cache makes the rest incremental.** `sh-review-cache` stores each run's file
+hashes, findings and verdicts under your OS cache directory (never in the repo, since a
+cross-repo review runs in a temp clone that gets deleted). The next review re-hunts only
+files whose content actually changed, reuses verdicts for findings that are unchanged, and
+reuses the recon map if nothing it covers moved.
+
+**A base-branch merge costs nothing.** Merging `main` into a PR branch changes the head
+SHA and nothing the author wrote, but a commit status is pinned to a SHA, so the required
+check silently disappears from the new head. When the PR's own files are byte-identical
+*and* the base delta touches nothing the findings depend on, the previous verdict is
+re-stamped onto the new SHA with no agents launched at all. That last condition is what
+makes it safe: a base merge that deletes a sanitizer leaves every PR file unchanged while
+turning a safe line into an exploitable one.
+
+Invalidation is deliberately conservative, because a stale entry in a security tool does
+not make it slow, it makes it **wrong**. The cache key hashes every `sh-kb-*` knowledge
+base, so a KB update invalidates every cached finding - a cached "clean" must never
+suppress the finding that update was written to catch. Model identity, skill version, file
+content and a 7-day TTL all invalidate too, and an unspecified model is treated as a miss.
+
+`--no-cache` disables it, `--refresh-cache` re-baselines, and `run.md` records per phase
+what was launched, reused and skipped, so a cache that quietly stops hitting is visible
+rather than assumed.
+
+### Posting, and where things are written
+
+**The review and the commit status are posted by default.** A review that was computed and
+never delivered helped nobody. `--confirm` restores a prompt before posting, `--dry-run`
+sends nothing, `--no-status` posts the review but leaves the commit status alone.
+
+Posting goes through `scripts/sh-pr-post.py` rather than hand-built API calls, because it
+is a multi-step operation with a mandatory tail: review, then status, then receipts, with
+a 422 recovered by moving the comment rather than shifting a line number. The script
+**never exits leaving the status at `pending`** - if the review cannot be posted it still
+sets `error`, saying the tooling failed rather than accusing the PR.
+
+Inline comments are reserved for findings at **medium or above** with confidence >= 80.
+Low-severity findings go in the collapsed body section, so a low-priority finding showing
+up with zero inline comments is the policy working, not a failure.
+
+### Local run metrics
+
+Every run records what it cost, so "the cache is working" and "reviews got slower" stop
+being matters of opinion.
+
+```bash
+python3 <skill>/scripts/sh-metrics.py path      # where records live
+python3 <skill>/scripts/sh-metrics.py report    # aggregate, by model
+python3 <skill>/scripts/sh-metrics.py purge --older-than-days 30
+```
+
+Two append-only JSONL files - `runs.jsonl` (repo, PR, tier, verdict, totals, the flags you
+passed) and `events.jsonl` (one line per phase or agent: model, tokens, duration, outcome,
+whether it was reused from cache). JSONL so a crashed run still leaves valid lines above
+the crash.
+
+| Platform | Metrics | Cache |
+|---|---|---|
+| **Linux / BSD** | `$XDG_DATA_HOME/security-harness/metrics`<br>default `~/.local/share/security-harness/metrics` | `$XDG_CACHE_HOME/security-harness`<br>default `~/.cache/security-harness` |
+| macOS | `~/Library/Application Support/security-harness/metrics` | `~/Library/Caches/security-harness` |
+| Windows | `%LOCALAPPDATA%\security-harness\metrics` | `%LOCALAPPDATA%\security-harness\cache` |
+
+Linux follows the XDG Base Directory spec, so both honour `XDG_DATA_HOME` and
+`XDG_CACHE_HOME` when set and fall back to `~/.local/share` and `~/.cache` when they are
+not. Override either directly with `SH_METRICS_DIR` and `SH_REVIEW_CACHE_DIR`.
+
+**On `python` vs `python3`:** most Linux distributions ship `python3` and have no `python`
+at all, so the examples here use `python3`. The bundled scripts carry a
+`#!/usr/bin/env python3` shebang and are executable, so `./scripts/sh-metrics.py report`
+works directly on Linux and macOS. The skill resolves
+`PY="$(command -v python3 || command -v python)"` once per run, which covers all three
+platforms including Git Bash on Windows.
+
+**Strictly local.** Neither script contains any network code or reporting endpoint.
+Anything token-shaped is redacted before it is written, because local files get pasted
+into issues.
 
 ### Running it unattended
 

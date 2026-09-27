@@ -72,7 +72,28 @@ def copy_tree(source, dest):
     if os.path.isdir(dest):
         shutil.rmtree(dest)
     shutil.copytree(source, dest)
+    _mark_executable(dest)
     return len(tree_files(dest))
+
+
+def _mark_executable(root):
+    """Give every bundled script the exec bit.
+
+    Windows has no exec bit, so a mirror generated there would otherwise be
+    committed 0644 and land non-executable for everyone who installs it on Linux
+    or macOS, where the shebang is the point. Setting it here means the mirror
+    cannot drift from the canonical copy depending on who regenerated it.
+    """
+    for dirpath, _dirs, files in os.walk(root):
+        for f in files:
+            if not f.endswith((".py", ".sh")):
+                continue
+            p = os.path.join(dirpath, f)
+            try:
+                mode = os.stat(p).st_mode
+                os.chmod(p, mode | 0o111)
+            except OSError:
+                pass
 
 
 def main():

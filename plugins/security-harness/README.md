@@ -24,7 +24,7 @@ gemini extensions install https://github.com/dmdhrumilmistry/security-harness
 ```bash
 git clone https://github.com/dmdhrumilmistry/security-harness
 cd security-harness
-python scripts/sync-agent-skills.py --install agents
+python3 scripts/sync-agent-skills.py --install agents
 ```
 
 ## Use
@@ -56,6 +56,23 @@ A PR fails only for what it `introduced` or `aggravated`. Findings that predate 
 reported and never block. Triage runs first with no subagents, so a PR with no security
 surface costs nothing and still reports a status. Comments carry a line-number-free
 fingerprint, so a re-push adds only what is new.
+
+Re-reviews are incremental. Fingerprints already on the PR are read before any analysis,
+so nothing is rediscovered and re-verified only to be discarded; a local cache re-hunts
+only files whose content changed; and a base-branch merge that leaves the PR's own files
+byte-identical re-stamps the previous verdict onto the new head SHA without launching
+anything. Invalidation is conservative: the cache key hashes every knowledge base, so a KB
+update re-scans everything rather than risk a stale "clean".
+
+The review and the commit status are **posted by default** (`--confirm` to be asked first,
+`--dry-run` to send nothing). Posting runs through `scripts/sh-pr-post.py`, which does the
+whole sequence or says which part failed, and never leaves the status stuck on `pending`.
+
+`scripts/sh-metrics.py` (run it as `python3 sh-metrics.py`, or directly, since it is
+executable and carries a `python3` shebang) records what every run cost - model, tokens, duration, cache reuse
+- to append-only JSONL under your own data directory. `sh-metrics.py path` prints where,
+`report` aggregates, `purge` deletes. Strictly local: no network code, no endpoint, and
+anything token-shaped is redacted before it is written.
 
 It writes to the pull request and the commit status only. It opens no issues and creates
 nothing in any external tracker.
