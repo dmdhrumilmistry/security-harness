@@ -64,6 +64,15 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  execution_file:
+    description: >-
+      Path to the agent's execution transcript, for diagnosing a run that
+      finished without doing what it was asked. Only set for agent=claude.
+      Upload it as an artifact rather than printing it: it contains every tool
+      result, and Actions logs are public on a public repo.
+    value: ${{ steps.claude.outputs.execution_file }}
+
 runs:
   using: "composite"
   steps:
@@ -111,6 +120,7 @@ runs:
         echo "claude_args: $ARGS"
 
     - name: Run Claude Code
+      id: claude
       if: inputs.agent == 'claude'
       uses: anthropics/claude-code-action@v1
       with:
