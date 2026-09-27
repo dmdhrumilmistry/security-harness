@@ -140,6 +140,58 @@ Everything lands under `<target>/.security-harness/<run-id>/`:
 Each published finding carries a payload, a PoC, the verification verdict, CWE/OWASP ids, CVSS, and a
 code-level mitigation.
 
+## Pull request review
+
+`sh-pr-review` reviews a single pull request rather than a whole codebase, posts the
+result as inline comments **on the PR itself**, and sets a `security/pr-review` commit
+status that branch protection can enforce.
+
+```
+review PR 42
+security review this PR
+```
+
+or from CI, via [`.github/workflows/security-pr-review.yml`](.github/workflows/security-pr-review.yml),
+which runs on every `opened`, `synchronize`, `reopened`, and `ready_for_review` event.
+
+Three properties make it usable as a merge gate rather than noise:
+
+- **Only what the PR is responsible for fails it.** Every finding carries a `pr_impact`
+  of `introduced`, `aggravated`, or `pre_existing`. The first two block; `pre_existing`
+  is reported and never blocks. Blocking a merge over code the author never wrote is how
+  a required check gets deleted, so when a hunter is unsure between `aggravated` and
+  `pre_existing`, it must pick `pre_existing`.
+- **Depth follows risk.** Triage runs first, in the orchestrator, with no subagents. It
+  maps changed paths and added-line sink tokens onto the same class slugs the `sh-kb-*`
+  bases use, then picks a tier. Tier 0 (no security-relevant change) launches nothing at
+  all and still sets the status. Tier 3 runs the full pipeline.
+- **Re-pushes do not spam.** Each comment carries a hidden fingerprint computed without
+  line numbers, so a re-review adds only what is new and lists what was fixed as
+  "Resolved since the last review".
+
+| Verdict | Status | When |
+|---|---|---|
+| fail | `failure` | introduced or aggravated finding at or above `--fail-on` (default `medium`), confidence >= 80 |
+| warn | `success` | nothing introduced or aggravated; pre-existing findings reported |
+| pass | `success` | no findings, or triage stopped at Tier 0 |
+| error | `error` | the review could not complete |
+
+`warn` reports `success` on purpose: a warning that blocks a merge is a failure with
+extra steps, and teams respond by removing the check. `error` is kept distinct from
+`failure` so a broken run never looks like a vulnerability it did not find.
+
+The review event is always `COMMENT`, never `REQUEST_CHANGES` or `APPROVE`. The commit
+status is the enforcement mechanism, and it is the one branch protection reads.
+
+**Scope:** the skill writes to the pull request and the commit status, and nowhere else.
+It opens no issues and creates nothing in any external tracker.
+
+The status is advisory until you require it. To make it a gate, see "Enforcing the check
+on a repository" in
+[`references/pr-review-mapping.md`](plugins/security-harness/references/pr-review-mapping.md).
+Start at `--fail-on=high` on a codebase that has never been scanned, and tighten once the
+backlog is clear.
+
 ## How it works
 
 1. **Setup** - probe available tools, define scope, create the run directory.
