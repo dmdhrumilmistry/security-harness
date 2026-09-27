@@ -36,7 +36,28 @@ security review this repo
 audit src/api for IDOR
 check for SQL injection in the payments service
 pentest this codebase and give me SARIF
+review PR 42
 ```
+
+## Pull request review
+
+`sh-pr-review` reviews one pull request instead of a whole codebase. Run it on your own
+machine, in any repo `gh` can see. It posts findings as inline comments on the PR and
+sets a `security/pr-review` commit status that branch protection can enforce, and it
+always asks before posting anything.
+
+```
+review PR 42
+sh-pr-review 128 --tier=3
+```
+
+A PR fails only for what it `introduced` or `aggravated`. Findings that predate it are
+reported and never block. Triage runs first with no subagents, so a PR with no security
+surface costs nothing and still reports a status. Comments carry a line-number-free
+fingerprint, so a re-push adds only what is new.
+
+It writes to the pull request and the commit status only. It opens no issues and creates
+nothing in any external tracker.
 
 ## Pipeline
 

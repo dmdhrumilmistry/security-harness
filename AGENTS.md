@@ -50,7 +50,7 @@ PY
 .claude-plugin/marketplace.json     # Claude Code marketplace manifest
 plugins/security-harness/           # the plugin itself
   agents/                           # sh-recon, sh-hunter, sh-chainer, sh-verifier, sh-reporter
-  skills/                           # CANONICAL skills: sh-router, sh-security-review, sh-kb-* (15)
+  skills/                           # CANONICAL skills: sh-router, sh-security-review, sh-pr-review, sh-kb-* (15)
   references/                       # shared reference docs
 gemini-extension.json               # Gemini CLI extension manifest
 GEMINI.md                           # Gemini context file
@@ -58,7 +58,7 @@ skills/                             # GENERATED mirror of the canonical skills
 scripts/sync-agent-skills.py        # regenerates that mirror
 docs/DISTRIBUTION.md                # packaging and public-listing steps
 .github/actions/ai-agent/           # pluggable agent runner (claude | codex | gemini | custom)
-.github/workflows/                  # stage 1 (open PR), stage 2 (review and merge)
+.github/workflows/                  # KB stage 1 (open PR), stage 2 (review and merge)
 .github/kb-update/                  # prompts and trusted-source allowlist for the KB updater
 ```
 

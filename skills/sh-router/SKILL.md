@@ -13,6 +13,7 @@ Prefer routing over doing the work inline - the specialized skills/agents carry 
 
 | The user wants… | Route to |
 |---|---|
+| To review a **pull request** ("review PR 42", "check this PR", "security review my PR", "review these changes before merge") | Invoke the **`sh-pr-review`** skill. Pass the PR number if given; it defaults to the PR for the current branch. |
 | A full security review / audit / pentest of a codebase | Invoke the **`sh-security-review`** skill (all stages). Pass the target path and any class filters. |
 | To find specific class(es) only ("just SQLi and IDOR") | Invoke **`sh-security-review`** with `classes:<slugs>`; it runs recon + those hunters + verify + report, skipping chaining if a single class. |
 | To re-run one stage on an existing run ("re-verify", "regenerate the report", "re-scan deps") | Invoke **`sh-security-review`** with `stage:<recon\|hunt\|chain\|verify\|report>`. |
@@ -39,6 +40,10 @@ Prefer routing over doing the work inline - the specialized skills/agents carry 
 - outdated/vulnerable dependency, CVE, SBOM -> handled in recon (**stage:recon** or full run)
 
 ## Steps
+0. **Is this about a pull request?** If the request names a PR number, says "this PR", "these changes",
+   "before merge", or the user is on a branch with an open PR and asks for a review, route to
+   **`sh-pr-review`** and stop. A PR review is scoped to the diff, posts back to the PR, and sets a
+   commit status; a codebase review is not and does neither. Do not substitute one for the other.
 1. Identify the **target path** (default: current working directory) and whether the user restricted the
    scope to specific classes or a single stage.
 2. Confirm authorization context briefly if the request implies attacking systems the user may not own

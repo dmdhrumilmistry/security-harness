@@ -140,6 +140,76 @@ Everything lands under `<target>/.security-harness/<run-id>/`:
 Each published finding carries a payload, a PoC, the verification verdict, CWE/OWASP ids, CVSS, and a
 code-level mitigation.
 
+## Pull request review
+
+`sh-pr-review` reviews a single pull request rather than a whole codebase, posts the
+result as inline comments **on the PR itself**, and sets a `security/pr-review` commit
+status that branch protection can enforce.
+
+**Run it from your own machine, in whatever repo you are working in.** Install the
+plugin, open a repo with a PR, and ask:
+
+```
+review PR 42
+security review this PR
+sh-pr-review 128 --tier=3
+```
+
+It works in any repository `gh` can see. Nothing about it is specific to this repo.
+Phase 7 prints the findings and the verdict and **asks before posting anything** - a
+decline is a normal outcome, and the payload stays on disk for you to post later.
+
+Before spending any analysis it checks whether you can actually write to the repo, so
+reviewing someone else's project tells you up front that posting will 403 rather than
+discovering it ten minutes in.
+
+Three properties make it usable as a merge gate rather than noise:
+
+- **Only what the PR is responsible for fails it.** Every finding carries a `pr_impact`
+  of `introduced`, `aggravated`, or `pre_existing`. The first two block; `pre_existing`
+  is reported and never blocks. Blocking a merge over code the author never wrote is how
+  a required check gets deleted, so when a hunter is unsure between `aggravated` and
+  `pre_existing`, it must pick `pre_existing`.
+- **Depth follows risk.** Triage runs first, in the orchestrator, with no subagents. It
+  maps changed paths and added-line sink tokens onto the same class slugs the `sh-kb-*`
+  bases use, then picks a tier. Tier 0 (no security-relevant change) launches nothing at
+  all and still sets the status. Tier 3 runs the full pipeline.
+- **Re-pushes do not spam.** Each comment carries a hidden fingerprint computed without
+  line numbers, so a re-review adds only what is new and lists what was fixed as
+  "Resolved since the last review".
+
+| Verdict | Status | When |
+|---|---|---|
+| fail | `failure` | introduced or aggravated finding at or above `--fail-on` (default `medium`), confidence >= 80 |
+| warn | `success` | nothing introduced or aggravated; pre-existing findings reported |
+| pass | `success` | no findings, or triage stopped at Tier 0 |
+| error | `error` | the review could not complete |
+
+`warn` reports `success` on purpose: a warning that blocks a merge is a failure with
+extra steps, and teams respond by removing the check. `error` is kept distinct from
+`failure` so a broken run never looks like a vulnerability it did not find.
+
+The review event is always `COMMENT`, never `REQUEST_CHANGES` or `APPROVE`. The commit
+status is the enforcement mechanism, and it is the one branch protection reads.
+
+**Scope:** the skill writes to the pull request and the commit status, and nowhere else.
+It opens no issues and creates nothing in any external tracker.
+
+### Running it unattended
+
+Optional, and a separate decision from using the skill. Run it by hand on your own PRs
+for a while first, so you know what it says about your codebase before it says it in
+front of your team.
+
+When you are ready, "Enforcing the check on a repository" in
+[`references/pr-review-mapping.md`](plugins/security-harness/references/pr-review-mapping.md)
+has a copy-paste workflow for **your** repo, plus the fail-safe that stops a dead job
+leaving a required check stuck on `pending`.
+
+The threshold stays at the default `medium`. Pre-existing findings never block a merge,
+so an unscanned codebase does not produce a wall of red on day one - only what a PR
+actually introduces or aggravates can fail it.
+
 ## How it works
 
 1. **Setup** - probe available tools, define scope, create the run directory.
