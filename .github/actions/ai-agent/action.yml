@@ -27,6 +27,15 @@ inputs:
     description: "Directory the agent runs in."
     required: false
     default: "."
+  github_token:
+    description: >-
+      GitHub token the agent acts with. Pass it for agent=claude on a
+      `pull_request` event: without it the action exchanges its OIDC token for a
+      Claude App token, and that exchange fails workflow validation whenever the
+      calling workflow is itself new or modified in the PR being run. Supplying a
+      token skips the exchange entirely.
+    required: false
+    default: ""
   claude_code_oauth_token:
     description: "Claude subscription token from `claude setup-token`. Preferred for agent=claude."
     required: false
@@ -105,6 +114,7 @@ runs:
       if: inputs.agent == 'claude'
       uses: anthropics/claude-code-action@v1
       with:
+        github_token: ${{ inputs.github_token }}
         claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
         anthropic_api_key: ${{ inputs.anthropic_api_key }}
         prompt: ${{ inputs.prompt }}
@@ -160,6 +170,7 @@ runs:
         AGENT_PROMPT_FILE: ${{ steps.stage.outputs.prompt_file }}
         AGENT_CUSTOM_INSTALL: ${{ inputs.custom_install }}
         AGENT_CUSTOM_COMMAND: ${{ inputs.custom_command }}
+        GH_TOKEN: ${{ inputs.github_token }}
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
         GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
         ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
