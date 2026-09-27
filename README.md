@@ -200,6 +200,41 @@ status is the enforcement mechanism, and it is the one branch protection reads.
 **Scope:** the skill writes to the pull request and the commit status, and nowhere else.
 It opens no issues and creates nothing in any external tracker.
 
+### Re-reviews are incremental
+
+A PR gets reviewed once per push, so the second review has to be cheaper than the first or
+the tool becomes something people turn off.
+
+**Dedup happens before the spending, not before the posting.** The fingerprints already on
+the PR are read in Phase 1 and handed to the hunters and the verifier. Finding a duplicate
+at the end would mean the most expensive model in the pipeline had already re-confirmed a
+conclusion that was written on the PR the whole time. This needs no cache: the state lives
+in the PR, so it works on a cold machine and in CI.
+
+**A local cache makes the rest incremental.** `sh-review-cache` stores each run's file
+hashes, findings and verdicts under your OS cache directory (never in the repo, since a
+cross-repo review runs in a temp clone that gets deleted). The next review re-hunts only
+files whose content actually changed, reuses verdicts for findings that are unchanged, and
+reuses the recon map if nothing it covers moved.
+
+**A base-branch merge costs nothing.** Merging `main` into a PR branch changes the head
+SHA and nothing the author wrote, but a commit status is pinned to a SHA, so the required
+check silently disappears from the new head. When the PR's own files are byte-identical
+*and* the base delta touches nothing the findings depend on, the previous verdict is
+re-stamped onto the new SHA with no agents launched at all. That last condition is what
+makes it safe: a base merge that deletes a sanitizer leaves every PR file unchanged while
+turning a safe line into an exploitable one.
+
+Invalidation is deliberately conservative, because a stale entry in a security tool does
+not make it slow, it makes it **wrong**. The cache key hashes every `sh-kb-*` knowledge
+base, so a KB update invalidates every cached finding - a cached "clean" must never
+suppress the finding that update was written to catch. Model identity, skill version, file
+content and a 7-day TTL all invalidate too, and an unspecified model is treated as a miss.
+
+`--no-cache` disables it, `--refresh-cache` re-baselines, and `run.md` records per phase
+what was launched, reused and skipped, so a cache that quietly stops hitting is visible
+rather than assumed.
+
 ### Running it unattended
 
 Optional, and a separate decision from using the skill. Run it by hand on your own PRs

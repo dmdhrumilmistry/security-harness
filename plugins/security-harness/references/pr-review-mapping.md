@@ -280,6 +280,111 @@ comment exists to be read in a diff view and acted on.
 <sub>Tier <T> review · <S> analysis agents · scanned <head_sha> · nothing was executed against a running application, payloads are constructed from source.</sub>
 ```
 
+## Caching and incremental review
+
+A PR is reviewed once per push. Without care, push five is five full reviews of the same
+code, and the fifth one costs the same as the first while telling you nothing new.
+
+Two mechanisms, in the order they pay off.
+
+### Dedup before spending, not before posting
+
+The fingerprints already on the PR are read in **Phase 1**, not Phase 6. They are handed
+to the hunters ("these are already reported") and used to skip verification for findings
+that already carry a verdict.
+
+This ordering is the whole point. Discovering a duplicate at Phase 6 means the hunters
+re-derived it and the verifier, the most expensive model in the pipeline, re-confirmed it,
+and then it was thrown away. The dedup at Phase 6 stays, as a safety net for anything that
+slips through, and a count that is consistently above zero there means Phase 1 is not
+being honoured.
+
+This needs no cache at all. It works on a cold machine, in CI, and on a fresh clone,
+because the state lives in the PR.
+
+### The local cache
+
+`scripts/sh-review-cache.py`, bundled with the skill. Deterministic get/put, so the model
+never hand-manages cache state: a cache is exact bookkeeping, and a model asked to keep it
+will eventually report a hit it cannot justify.
+
+Stored outside any repository, because a cross-repo review runs in a temp clone that is
+deleted at the end of the run:
+
+| Platform | Location |
+|---|---|
+| Windows | `%LOCALAPPDATA%\security-harness\cache` |
+| macOS | `~/Library/Caches/security-harness` |
+| other | `$XDG_CACHE_HOME/security-harness`, else `~/.cache/security-harness` |
+
+`SH_REVIEW_CACHE_DIR` overrides it.
+
+An entry holds the run's `head_sha` and `base_sha`, the content hash of every PR-changed
+file, every finding with its verdict, and the fingerprints that were posted.
+
+### What invalidates an entry
+
+Conservative, and deliberately so. **A stale entry in a security tool does not make the
+tool slow, it makes it wrong**, by suppressing a finding the current knowledge base would
+catch. Every one of these is a miss:
+
+| Change | Why it invalidates |
+|---|---|
+| File content | Any edit. Hashes are content-based, so a rename or a reformat counts. |
+| **Knowledge bases** | The key hashes every `sh-kb-*` file. A KB update invalidates every cached finding. |
+| Skill version | The analysis contract changed. |
+| Model | A haiku verdict is not an opus verdict. An *unspecified* model is also a miss. |
+| Age | 7 days by default. |
+| Schema | The entry shape changed. |
+
+The knowledge-base hash is the one that matters most, and it is a hash rather than a
+version number precisely so nobody has to remember to bump it. A cached "clean for sqli"
+produced before a KB update must never suppress the finding that update was written to
+catch.
+
+Unreadable or unparseable entries are misses, never errors. `--no-cache` skips it
+entirely; `--refresh-cache` ignores the entry but still writes a new one.
+
+### The unchanged-PR fast path
+
+A PR's head moves for two very different reasons: new work, or a base-branch merge to stay
+current. The second changes the head SHA and changes nothing the author wrote, but a
+commit status is pinned to a SHA, so the required check silently goes missing on the new
+head. Re-running the full review just to restore it is expensive and learns nothing.
+
+Carry the previous verdict forward only when **all** of these hold:
+
+1. The cache hit, so KB, skill version, and model all still match.
+2. The set of PR-changed paths is identical.
+3. Every one of those paths has an identical content hash.
+4. The added-line sets in `diff-index.json` are identical.
+5. The base delta (`git diff --name-only <cached base>..<current base>`) touches none of
+   the PR's changed paths, no file named in a cached finding, and nothing in the cached
+   recon neighbourhood.
+
+Condition 5 is what makes the other four safe. A base merge that deletes a sanitizer the
+PR's code relied on leaves every PR file byte-identical while turning a safe line into an
+exploitable one. Conditions 2 to 4 cannot see that.
+
+When all five hold: launch nothing, post nothing (it is already on the PR), **re-stamp the
+commit status against the new head SHA**, and re-store the entry so the next base merge is
+free too. Say plainly that it was carried forward and from which SHA. Never present a
+carried-forward verdict as a fresh review.
+
+When any condition fails, say which and re-review. **When in doubt, re-review**: a
+carried-forward verdict that should have been recomputed is a missed vulnerability, and
+that costs far more than the run it saved.
+
+### Making the saving visible
+
+`run.md` records, per phase, what was launched, what was reused, and what was skipped.
+Without it the cache is unfalsifiable: a quick run looks like a working cache, and nobody
+notices when it stops hitting. A second review of an unchanged PR that reports zero reuse
+is a bug, and only this table surfaces it.
+
+`sh-review-cache stat` shows what is cached and flags entries whose KB hash has gone
+stale. `prune` drops expired ones; `clear` drops everything.
+
 ## Verdict and commit status
 
 The review posts comments; the **commit status** is what a branch protection rule

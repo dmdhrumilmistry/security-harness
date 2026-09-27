@@ -57,6 +57,13 @@ reported and never block. Triage runs first with no subagents, so a PR with no s
 surface costs nothing and still reports a status. Comments carry a line-number-free
 fingerprint, so a re-push adds only what is new.
 
+Re-reviews are incremental. Fingerprints already on the PR are read before any analysis,
+so nothing is rediscovered and re-verified only to be discarded; a local cache re-hunts
+only files whose content changed; and a base-branch merge that leaves the PR's own files
+byte-identical re-stamps the previous verdict onto the new head SHA without launching
+anything. Invalidation is conservative: the cache key hashes every knowledge base, so a KB
+update re-scans everything rather than risk a stale "clean".
+
 It writes to the pull request and the commit status only. It opens no issues and creates
 nothing in any external tracker.
 
