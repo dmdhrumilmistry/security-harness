@@ -464,7 +464,7 @@ jobs:
           claude_args: '--max-turns 80 --allowedTools "Read,Write,Edit,Glob,Grep,Bash,Task,Skill"'
           prompt: |
             Run the sh-pr-review skill on pull request
-            #${{ github.event.pull_request.number }} with --ci --fail-on=high.
+            #${{ github.event.pull_request.number }} with --ci.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SH_PR_REVIEW_AUTOPOST: "1"
@@ -524,12 +524,17 @@ gh api repos/<OWNER>/<REPO>/branches/main/protection/required_status_checks \
 - **Give people a documented way through.** A blocked PR with no escape hatch
   gets the rule deleted the first time the reviewer is wrong. Decide up front
   whether that is an admin override, a `security-reviewed` label that a follow-up
-  job honours, or an agreed `--fail-on=high`. Write it down where the team will
-  find it.
-- **Start at `--fail-on=high`, tighten later.** Failing on medium from day one on
-  a codebase that has never been scanned produces a wall of red and burns the
-  check's credibility. Let it warn for a sprint, fix what it finds, then lower
-  the threshold.
+  job honours, or a time-boxed `--fail-on=high`. Write it down where the team
+  will find it, including when it expires.
+- **The default threshold is `medium`, and it stays there.** Medium is where
+  the findings that actually get exploited live, so raising the bar to `high`
+  to keep the board green is a decision to ship known-exploitable code. If the
+  first runs on an unscanned codebase produce a wall of red, the fix is
+  `pre_existing`, not a higher threshold: those findings do not block a merge,
+  and only what a PR introduces or aggravates ever does. A wall of red on day
+  one means the PRs really are introducing medium-severity issues, which is
+  exactly what you turned the check on to learn. `--fail-on=high` exists for a
+  deliberate, temporary, written-down exception, not as a starting position.
 - **Pre-existing findings never block.** That is deliberate and worth telling the
   team explicitly, because the first question when the check goes red is always
   "why is it failing on code I didn't touch", and the answer must be that it is

@@ -48,7 +48,7 @@ always asks before posting anything.
 
 ```
 review PR 42
-sh-pr-review 128 --fail-on=high
+sh-pr-review 128 --tier=3
 ```
 
 A PR fails only for what it `introduced` or `aggravated`. Findings that predate it are

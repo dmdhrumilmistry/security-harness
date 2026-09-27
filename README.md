@@ -152,7 +152,7 @@ plugin, open a repo with a PR, and ask:
 ```
 review PR 42
 security review this PR
-sh-pr-review 128 --fail-on=high
+sh-pr-review 128 --tier=3
 ```
 
 It works in any repository `gh` can see. Nothing about it is specific to this repo.
@@ -203,9 +203,12 @@ front of your team.
 
 When you are ready, "Enforcing the check on a repository" in
 [`references/pr-review-mapping.md`](plugins/security-harness/references/pr-review-mapping.md)
-has a copy-paste workflow for **your** repo, plus the two things that decide whether the
-check survives: a fail-safe so a dead job never leaves a required check stuck on
-`pending`, and starting at `--fail-on=high` on a codebase that has never been scanned.
+has a copy-paste workflow for **your** repo, plus the fail-safe that stops a dead job
+leaving a required check stuck on `pending`.
+
+The threshold stays at the default `medium`. Pre-existing findings never block a merge,
+so an unscanned codebase does not produce a wall of red on day one - only what a PR
+actually introduces or aggravates can fail it.
 
 ## How it works
 

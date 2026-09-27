@@ -103,8 +103,9 @@ source. Do not send source or findings to any external service.
   disk and print it.
 - `--chains`: force chain synthesis on at any tier.
 - `--fail-on=<critical|high|medium|low>`: severity at or above which an introduced or
-  aggravated finding fails the check. Default `medium`. The confidence floor of 80 is
-  fixed and not configurable.
+  aggravated finding fails the check. **Default `medium`.** Use the default unless the
+  user passes this explicitly; do not raise the bar on your own initiative because a run
+  produced a lot of findings. The confidence floor of 80 is fixed and not configurable.
 - `--status-context=<name>`: the commit status context. Default `security/pr-review`.
   **Changing this orphans any branch protection rule matching the old name.**
 - `--no-status`: post the review but set no commit status. Use it when the user lacks
@@ -414,7 +415,12 @@ pr-review-mapping.md to make it one."* Say it once, not on every run.
 - **`error` for a broken run, `failure` only for a real finding.** Conflating them teaches
   people to ignore red.
 - **`pre_existing` never fails a PR.** This is the rule that keeps the check installed.
-  When in doubt between `aggravated` and `pre_existing`, pick `pre_existing`.
+  When in doubt between `aggravated` and `pre_existing`, pick `pre_existing`. It is also
+  why the default threshold can sit at `medium` on an unscanned codebase without burying
+  anyone: the backlog is reported, not blocking.
+- **Do not raise `--fail-on` to make a run look better.** Medium is where most
+  exploitable bugs live. If a PR trips the threshold, that is the check working. Only
+  the user changes the threshold, and only deliberately.
 - **Triage is not optional.** Tier 0 exists to make the common case free, but it still
   sets the status, or a required check leaves the PR stuck.
 - **Inline comments only on lines this PR changed.** Anything else is unanchorable by
