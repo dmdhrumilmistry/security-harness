@@ -42,13 +42,14 @@ review PR 42
 ## Pull request review
 
 `sh-pr-review` reviews one pull request instead of a whole codebase. Run it on your own
-machine, in any repo `gh` can see. It posts findings as inline comments on the PR and
-sets a `security/pr-review` commit status that branch protection can enforce, and it
-always asks before posting anything.
+machine, on any PR you can read. It posts findings as inline comments on the PR and sets
+a `security/pr-review` commit status that branch protection can enforce, and it always
+asks before posting anything.
 
 ```
-review PR 42
-sh-pr-review 128 --tier=3
+review https://github.com/acme/api/pull/128   # any repo, cloned to a temp dir
+review PR 42                                  # the repo you are currently in
+security review this PR                       # the PR for your current branch
 ```
 
 A PR fails only for what it `introduced` or `aggravated`. Findings that predate it are

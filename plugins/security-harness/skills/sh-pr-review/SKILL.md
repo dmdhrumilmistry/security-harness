@@ -1,7 +1,7 @@
 ---
 name: sh-pr-review
 description: "Security-review a GitHub pull request, post the result as inline review comments on the PR, and set a pass/fail commit status that branch protection can enforce. Fails the PR for vulnerabilities it introduces or makes worse; passes with a warning for pre-existing ones. Triages the diff first and scales depth to risk, dedupes across re-pushes, and never posts without an explicit yes. Use when reviewing a pull request rather than a whole codebase."
-argument-hint: "[PR number, default: PR for current branch] [--tier=0..3] [--deep] [--fail-on=critical|high|medium|low] [--dry-run] [--no-status] [--ci]"
+argument-hint: "[PR URL, or a number for this repo; default: PR for current branch] [--tier=0..3] [--deep] [--fail-on=critical|high|medium|low] [--dry-run] [--no-status] [--ci]"
 allowed-tools: Read, Write, Grep, Glob, Bash, Task, Skill
 ---
 
@@ -11,7 +11,7 @@ allowed-tools: Read, Write, Grep, Glob, Bash, Task, Skill
 
 - Repo: !`gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "(gh unavailable or not a GitHub repo)"`
 - Branch: !`git branch --show-current 2>/dev/null || echo "not a git repo"`
-- PR for this branch: !`gh pr view --json number,title,baseRefName,isDraft,additions,deletions,changedFiles 2>/dev/null || echo "(none, pass a PR number as an argument)"`
+- PR for this branch: !`gh pr view --json number,title,baseRefName,isDraft,additions,deletions,changedFiles 2>/dev/null || echo "(none, pass a PR URL or number as an argument)"`
 - Timestamp: !`date +%Y-%m-%d-%H%M%S`
 
 ## Arguments
@@ -62,10 +62,11 @@ Running it unattended in CI is possible but optional, and a separate decision. S
 ### Before you start, check what the user can actually do
 
 The skill writes two things: a review on the PR, and a commit status. A user reviewing
-someone else's repository may be able to do neither.
+someone else's repository may be able to do neither. Run this in Phase 0, once `REPO` is
+resolved and before any subagent is launched.
 
 ```
-gh api repos/<OWNER>/<REPO> --jq '.permissions'
+gh api "repos/$REPO" --jq '.permissions'
 ```
 
 - `push` or `maintain` or `admin`: both the review and the status will work.
@@ -76,6 +77,10 @@ gh api repos/<OWNER>/<REPO> --jq '.permissions'
 Do not discover this at Phase 7 after ten minutes of analysis.
 
 ### Keep the run directory out of their repo
+
+This applies when the PR is in the repository you are already sitting in. For a PR in a
+different repository the run tree lands inside the temporary clone, so there is nothing
+to protect and you can skip the check.
 
 The run tree lands in the target repository's working tree. Before writing to it, check
 whether `.security-harness/` is ignored:
@@ -96,7 +101,14 @@ source. Do not send source or findings to any external service.
 
 ## Flags
 
-- `<number>`: the PR to review. Defaults to the PR for the current branch.
+- `<pr>`: which PR to review. Three accepted forms:
+  - **A URL**, `https://github.com/<owner>/<repo>/pull/<n>`. Reviews that PR in that
+    repository, which may be any repository you can read. This is the form to use for
+    anything outside the repo you are sitting in.
+  - **A bare number**, `42`. Resolved **against the repository the skill is running in**,
+    the one `git remote` points at. Never against some other repo, and never against the
+    last repo reviewed.
+  - **Nothing**, in which case it is the open PR for the current branch.
 - `--deep`: force Tier 3 regardless of triage.
 - `--tier=<0..3>`: pin the tier explicitly, overriding triage. Use when you disagree with it.
 - `--dry-run`: do everything except post and except set any status. Write the payload to
@@ -120,38 +132,104 @@ source. Do not send source or findings to any external service.
 ## Phase 0: resolve the PR
 
 1. `TS` from Current state.
-2. Resolve the PR number: from `$ARGUMENTS` if given, else the one in Current state. If
-   neither resolves, stop and say so. Do not guess and do not fall back to `HEAD~1`.
-3. Fetch PR metadata and keep it:
+2. **Resolve the PR into a repo and a number.** Set `REPO` and `N`, and use both
+   everywhere after this. Never call a `gh pr` command without `--repo "$REPO"`: without
+   it `gh` silently targets the current directory's remote, which is the wrong repo the
+   moment a URL was passed.
+
+   ```
+   # local repo, used for both the bare-number case and the same-repo check
+   LOCAL_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+   ```
+
+   | `$ARGUMENTS` contains | `REPO` | `N` |
+   |---|---|---|
+   | `https://github.com/<o>/<r>/pull/<n>` (or the `gh` short form `<o>/<r>#<n>`) | `<o>/<r>` from the URL | `<n>` from the URL |
+   | a bare number `<n>` | `$LOCAL_REPO` | `<n>` |
+   | neither | `$LOCAL_REPO` | the PR for the current branch |
+
+   Accept a URL with a trailing `/files`, `/commits`, `#discussion_r...`, or a query
+   string; take the `<n>` after `/pull/`. Reject anything that is not a GitHub PR URL
+   rather than guessing at it, an issue URL especially, since `/issues/<n>` and
+   `/pull/<n>` share a number space and reviewing the wrong object wastes a full run.
+
+   If nothing resolves, stop and say so. Do not guess, and do not fall back to `HEAD~1`.
+
+3. **If `REPO` is not `$LOCAL_REPO`, get the code before analysing it.** The hunters read
+   files, not just the patch, so a diff alone is not enough. Clone into a scratch
+   directory outside the user's current repo and work there for the rest of the run:
+
+   ```
+   WORK="$(mktemp -d)/<repo>"
+   gh repo clone "$REPO" "$WORK" -- --quiet
+   cd "$WORK"
+   ```
+
+   Say plainly that you are cloning, where to, and roughly how large it is before you do
+   it on a big repository. `LOG_DIR` then lives inside that clone, so nothing is written
+   into the repo the user is actually working in. Tell them the path at the end, and that
+   it is a temporary directory.
+
+   When `REPO` **is** `$LOCAL_REPO`, stay where you are and change nothing about the
+   user's checkout beyond the run directory.
+
+4. Fetch PR metadata and keep it:
 
 ```
-gh pr view <N> --json number,title,body,author,baseRefName,headRefName,headRefOid,isDraft,additions,deletions,changedFiles,files
+gh pr view "$N" --repo "$REPO" --json number,title,body,author,baseRefName,headRefName,headRefOid,isDraft,additions,deletions,changedFiles,files,url
 ```
 
-4. Fetch the diff **against the PR's real merge-base**, not `HEAD~1`:
+5. Fetch the diff **against the PR's real merge-base**, not `HEAD~1`:
 
 ```
-gh pr diff <N> --patch > <LOG_DIR>/pr.patch
+gh pr diff "$N" --repo "$REPO" --patch > <LOG_DIR>/pr.patch
 ```
 
-5. Create the run tree under the harness's usual root so the other skills can still find
-   the run:
+6. **Put the PR's code on disk.** The hunters read files, not only the patch, so the
+   tree they read has to be the PR's head. Skipping this reviews whatever happened to be
+   checked out, which is usually the base branch, and every finding is then about the
+   wrong version of the code.
+
+   **Never switch the user's branch to do this.** They may have uncommitted work, and a
+   review is not worth disturbing a checkout. Use a detached worktree, which leaves the
+   index, the branch, and the working tree exactly as they were:
+
+   ```
+   TREE="$(mktemp -d)/pr-$N"
+   git fetch --quiet origin "pull/$N/head"
+   git worktree add --detach --quiet "$TREE" "$HEAD_SHA"
+   cd "$TREE"
+   ```
+
+   `refs/pull/<n>/head` exists on the base repository even when the PR comes from a fork,
+   so this works without adding a remote.
+
+   In the cross-repo clone case from step 3 you already own the checkout, so
+   `gh pr checkout "$N" --repo "$REPO"` inside the clone is fine and simpler.
+
+   Remove the worktree at the end of the run (`git worktree remove --force "$TREE"`),
+   including on an error path. A stale worktree left behind makes `git worktree list`
+   confusing months later.
+
+7. Create the run tree. Put it in the **user's** repository, not the throwaway worktree,
+   so the results survive the cleanup above and they can read them afterwards:
 
 ```
 mkdir -p .security-harness/pr-<N>-<TS>/{audit,evidence,reports,review}
 ```
 
-Remember it as `LOG_DIR`. Substitute the literal path into every delegation prompt.
+Remember it as `LOG_DIR`, as an **absolute** path, since you are about to change
+directory into the worktree. Substitute the literal path into every delegation prompt.
 
-6. Write `<LOG_DIR>/run.json` with `mode: "pr-review"`, the PR number, `head_sha`
+8. Write `<LOG_DIR>/run.json` with `mode: "pr-review"`, the PR number, `head_sha`
    (`headRefOid`), `base_ref`, author, and the changed-file list. The `head_sha` is what
    the posted review is pinned to, so record it.
-7. Initialise `run.md` and `audit/orchestrator.jsonl`.
-8. **Set the status to `pending`** (unless `--no-status` or `--dry-run`), against the head
+9. Initialise `run.md` and `audit/orchestrator.jsonl`.
+10. **Set the status to `pending`** (unless `--no-status` or `--dry-run`), against the head
    SHA you just recorded:
 
 ```
-gh api repos/<OWNER>/<REPO>/statuses/<HEAD_SHA> --method POST \
+gh api repos/$REPO/statuses/$HEAD_SHA --method POST \
   -f state=pending -f context=security/pr-review \
   -f description='Security review in progress'
 ```
@@ -296,8 +374,8 @@ Do this yourself. It is assembly, not analysis.
 3. Read back what is already on the PR and drop anything already said:
 
 ```
-gh api repos/<OWNER>/<REPO>/pulls/<N>/comments --paginate --jq '.[].body'
-gh api repos/<OWNER>/<REPO>/pulls/<N>/reviews  --paginate --jq '.[].body'
+gh api repos/$REPO/pulls/$N/comments --paginate --jq '.[].body'
+gh api repos/$REPO/pulls/$N/reviews  --paginate --jq '.[].body'
 ```
 
 Skip every finding whose fingerprint already appears. Record skips in
@@ -344,14 +422,14 @@ This is the outward-facing step.
    notifications:
 
 ```
-gh api repos/<OWNER>/<REPO>/pulls/<N>/reviews --method POST --input <LOG_DIR>/review/review-payload.json
+gh api repos/$REPO/pulls/$N/reviews --method POST --input <LOG_DIR>/review/review-payload.json
 ```
 
 6. **Set the final commit status** (unless `--no-status`), against the same head SHA,
    using the description templates in `pr-review-mapping.md`:
 
 ```
-gh api repos/<OWNER>/<REPO>/statuses/<HEAD_SHA> --method POST \
+gh api repos/$REPO/statuses/$HEAD_SHA --method POST \
   -f state=<success|failure|error> -f context=<--status-context, default security/pr-review> \
   -f description='<140 chars or fewer>' -f target_url='<posted review URL, else the run directory>'
 ```
@@ -430,6 +508,10 @@ pr-review-mapping.md to make it one."* Say it once, not on every run.
 - **Dedup before posting, every time.** A re-review after a push must add only what is new.
 - **Respect the inline cap.** Past it, summarise. A wall of bot comments is worse than a
   short list.
+- **Never leave a worktree or clone behind.** Remove the detached worktree, and say
+  where a cross-repo clone lives, on every exit path including errors.
+- **Never switch the user's branch.** They may have uncommitted work. Read the PR's code
+  from a detached worktree or a clone, never by checking out over their checkout.
 - **Never imply execution.** Nothing is run against a live application; payloads are
   constructed from source.
 - **The PR is the only place output goes.** Post review comments and set the commit
