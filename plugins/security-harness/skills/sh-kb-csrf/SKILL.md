@@ -19,7 +19,9 @@ State-changing route handlers (`POST`/`PUT`/`PATCH`/`DELETE`, or `GET` that muta
 - lack CSRF middleware/decorator, or explicitly disable it: `csrf_exempt`, `@csrf.exempt`,
   `skip_before_action :verify_authenticity_token`, `csrf: false`, Spring `.csrf().disable()`,
   Express without `csurf`, `SameSite=None`/absent on the session cookie.
-- Grep: `csrf_exempt|verify_authenticity_token|csrf().disable|csurf|SameSite|@csrf`.
+- Naive double-submit (cookie compared to a body/header value, not HMAC-bound to the session) and
+  method-override middleware (`_method`, `X-HTTP-Method-Override`) on mutating routes.
+- Grep: `csrf_exempt|verify_authenticity_token|csrf().disable|csurf|SameSite|@csrf|_method|X-HTTP-Method-Override`.
 
 ## Detection recipe
 1. From `codebase-map.json`, list state-changing endpoints and their auth mechanism.
@@ -34,6 +36,14 @@ State-changing route handlers (`POST`/`PUT`/`PATCH`/`DELETE`, or `GET` that muta
 - For JSON endpoints that accept `text/plain` or don't check content-type: a form with
   `enctype="text/plain"` crafting a JSON-ish body.
 - GET-based state change: `<img src="https://target/delete?id=5">`.
+- SameSite=Lax bypasses: (a) method override, e.g. a top-level GET form carrying `_method=POST` against a
+  framework that honors it (Symfony); (b) GET-mutating routes; (c) client-side redirect gadget (an open
+  redirect or JS `location = param` on the target site) which makes the final request same-site; (d)
+  sibling-subdomain XSS/takeover, since "same-site" is the registrable domain, not the origin.
+- Client-side CSRF: target JS builds a request from attacker-controlled input (URL hash, `window.name`,
+  `postMessage`), so tokens and SameSite do not help.
+- Login CSRF: an unauthenticated login form with no pre-session token lets an attacker sign the victim into
+  the attacker's account.
 - PoC = the victim, while logged in, loads the attacker page and the state change occurs.
 
 ## False-positive filters
@@ -41,6 +51,7 @@ State-changing route handlers (`POST`/`PUT`/`PATCH`/`DELETE`, or `GET` that muta
 - `SameSite=Lax` (default in modern browsers) or `Strict` on the session cookie - mitigates most CSRF;
   note residual risk for top-level GET navigations under Lax.
 - Auth is a header token the browser won't auto-attach cross-site (Bearer), not a cookie.
+- Non-safe requests are rejected unless `Sec-Fetch-Site` is `same-origin`/`none` (or `Origin` matches).
 - Endpoint requires a custom header (forces CORS preflight) and CORS is not permissive.
 
 ## CWE / OWASP / severity
@@ -54,4 +65,6 @@ attacker OAuth/app -> persistence; often combined with `access-control` to hit p
 ## Mitigation
 Enable framework CSRF protection on all state-changing routes (don't blanket-exempt); require a
 synchronizer or double-submit token; set session cookies `SameSite=Lax`/`Strict` + `Secure`; prefer
-non-ambient auth for APIs; require a custom header for JSON APIs and lock down CORS.
+non-ambient auth for APIs; prefer signed (HMAC, session-bound) double-submit over naive double-submit; reject
+cross-site non-safe requests via `Sec-Fetch-Site` with an `Origin` fallback; use the `__Host-` cookie prefix
+so sibling subdomains cannot overwrite cookies; never mutate state on GET; XSS defeats every CSRF defense; require a custom header for JSON APIs and lock down CORS.

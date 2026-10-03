@@ -35,6 +35,11 @@ Login/logout `?next=`/`?return_to=`/`?redirect=`/`?url=` params, post-action red
 - Bypass of `startswith("/")`: `//evil.com`, `/\evil.com`, `/%2f%2fevil.com`.
 - PoC: request the endpoint with the crafted target and observe a redirect to the attacker host.
 
+- SameSite bypass gadget: a client-side redirect (`location = param`) makes the follow-up request same-site,
+  defeating Lax cookies on a CSRF target. Treat any open redirect as a CSRF-chain input.
+- Forwards: user-controlled server-side forward targets (`RequestDispatcher.forward`, `forward:` view prefix)
+  can reach admin routes without re-running authorization.
+
 ## False-positive filters
 - Target is forced relative (leading single `/` **and** not `//`/`/\`) after normalization, or resolved
   against the app origin and re-checked.
@@ -47,10 +52,10 @@ step in account takeover.
 
 ## Chaining hints
 Open redirect + OAuth `redirect_uri` -> steal authorization code -> account takeover; + token/Referer leak
--> session theft (`auth`); + `ssrf` allowlist bypass (redirect from allowed host to internal); boosts
+-> session theft (`auth`); + SameSite=Lax CSRF bypass (`csrf`); + `ssrf` allowlist bypass (redirect from allowed host to internal); boosts
 phishing credibility. Frequently the first hop in takeover chains.
 
 ## Mitigation
-Avoid user-controlled redirect targets; if needed, allowlist exact destination hosts or force
+Avoid user-controlled redirect targets (best: a server-side map from opaque id to full URL); if needed, allowlist exact destination hosts or force
 same-origin/relative paths (reject `//`, `/\`, absolute URLs, and non-http schemes) after canonicalization;
 for OAuth, exact-match `redirect_uri` against pre-registered values; show an interstitial for external links.
