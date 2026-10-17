@@ -34,6 +34,11 @@ State-changing route handlers (`POST`/`PUT`/`PATCH`/`DELETE`, or `GET` that muta
 - For JSON endpoints that accept `text/plain` or don't check content-type: a form with
   `enctype="text/plain"` crafting a JSON-ish body.
 - GET-based state change: `<img src="https://target/delete?id=5">`.
+- SameSite=Lax bypasses: (1) GET-based top-level navigation to a state-changing route; (2) method override
+  params (e.g. Symfony `_method=POST` on a GET) that turn a navigation into a mutation; (3) on-site gadget:
+  a client-side redirect built from URL params triggers a same-site request that carries `Strict` cookies
+  (server-side redirects do not); (4) XSS on any sibling subdomain is same-site, so it bypasses SameSite.
+  Also test WebSocket handshakes (cross-site WebSocket hijacking is CSRF against the handshake).
 - PoC = the victim, while logged in, loads the attacker page and the state change occurs.
 
 ## False-positive filters
@@ -52,6 +57,8 @@ CSRF + `xss` (steal token then forge) ; CSRF to change email/password -> account
 attacker OAuth/app -> persistence; often combined with `access-control` to hit privileged actions.
 
 ## Mitigation
-Enable framework CSRF protection on all state-changing routes (don't blanket-exempt); require a
+Treat SameSite as defense in depth, not a replacement for tokens (no SameSite mode gives guaranteed
+immunity); never mutate state on GET and enforce the real HTTP method server-side; audit sibling
+subdomains and WebSocket handshakes. Enable framework CSRF protection on all state-changing routes (don't blanket-exempt); require a
 synchronizer or double-submit token; set session cookies `SameSite=Lax`/`Strict` + `Secure`; prefer
 non-ambient auth for APIs; require a custom header for JSON APIs and lock down CORS.
