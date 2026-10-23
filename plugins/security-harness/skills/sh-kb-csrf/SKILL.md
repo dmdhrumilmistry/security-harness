@@ -43,6 +43,19 @@ State-changing route handlers (`POST`/`PUT`/`PATCH`/`DELETE`, or `GET` that muta
 - Auth is a header token the browser won't auto-attach cross-site (Bearer), not a cookie.
 - Endpoint requires a custom header (forces CORS preflight) and CORS is not permissive.
 
+- Naive double-submit cookie (token only compared to a cookie, not signed or bound to the session) is
+  weak: report it if sibling subdomains or cookie injection are plausible. Also check for token-in-URL,
+  tokens validated only when present (missing token accepted), and `Origin: null`/missing `Origin` treated
+  as same-origin.
+- `SameSite` does not cover sibling subdomains (same registrable domain, so a subdomain XSS or takeover
+  bypasses it), and Lax still sends cookies on top-level GET, so any GET that mutates stays exploitable.
+- Origin/Referer checks that use prefix/substring matching (`example.org.attacker.com` passes) or trust
+  `X-Forwarded-Host` from the client are bypassable.
+- Login forms without a pre-session token allow login CSRF (victim signed into attacker account).
+- Client-side CSRF: JS that builds a request path/body from URL fragment or query input (grep `fetch(` /
+  `XMLHttpRequest` with `location.hash`/`location.search`) lets an attacker steer a same-origin request
+  that carries the token and cookie.
+
 ## CWE / OWASP / severity
 CWE-352. OWASP A01:2021. Severity by action impact: account/email/password change or money transfer ->
 **high**; low-value toggles -> medium/low.
@@ -54,4 +67,7 @@ attacker OAuth/app -> persistence; often combined with `access-control` to hit p
 ## Mitigation
 Enable framework CSRF protection on all state-changing routes (don't blanket-exempt); require a
 synchronizer or double-submit token; set session cookies `SameSite=Lax`/`Strict` + `Secure`; prefer
-non-ambient auth for APIs; require a custom header for JSON APIs and lock down CORS.
+non-ambient auth for APIs; require a custom header for JSON APIs and lock down CORS. Add a Fetch Metadata
+check as defense in depth: reject non-safe methods when `Sec-Fetch-Site` is `cross-site` (treat `same-site`
+cautiously), keeping an Origin/Referer fallback for browsers that omit it. Use signed, session-bound tokens
+for stateless double-submit; CAPTCHA is not a CSRF defense.
