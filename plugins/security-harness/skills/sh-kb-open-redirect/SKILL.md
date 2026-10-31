@@ -19,7 +19,9 @@ Login/logout `?next=`/`?return_to=`/`?redirect=`/`?url=` params, post-action red
 - **JS/TS**: `res.redirect(userUrl)`, `window.location = user`, `location.href = user`, `location.assign`,
   Next.js `redirect(user)`.
 - **Java**: `response.sendRedirect(user)`, Spring `"redirect:" + user`, `RedirectView`.
-- **PHP**: `header("Location: " . $user)`. **Go**: `http.Redirect(w, r, userURL, ...)`.
+- **PHP**: `header("Location: " . $user)` (code after it runs unless `exit`). **Go**: `http.Redirect(w, r, userURL, ...)`.
+- **C#/Rails**: `Response.Redirect(url)`, `Redirect(returnUrl)`, `redirect_to params[:url]`.
+- **Forwards**: `getRequestDispatcher(user).forward(...)` can reach privileged handlers; check authz on the target.
 - Grep: `sendRedirect|res.redirect|HttpResponseRedirect|\bredirect\(|Location:\s|location.href|window.location`.
 
 ## Detection recipe
@@ -38,7 +40,10 @@ Login/logout `?next=`/`?return_to=`/`?redirect=`/`?url=` params, post-action red
 ## False-positive filters
 - Target is forced relative (leading single `/` **and** not `//`/`/\`) after normalization, or resolved
   against the app origin and re-checked.
-- Destination validated against a strict host allowlist (exact host match, not substring/`endsWith`).
+- Destination validated against a strict host allowlist (exact host match, not substring/`endsWith`), using the
+  same URL parser as the redirect, comparing scheme/host/port, rejecting userinfo, and redirecting to the
+  validated value rather than a later-modified copy.
+- Framework local-only helpers (ASP.NET Core `LocalRedirect`/`IsLocalUrl`) are used.
 - Redirect target is server-chosen (not user input) or an opaque id mapped to a known URL.
 
 ## CWE / OWASP / severity
@@ -53,4 +58,5 @@ phishing credibility. Frequently the first hop in takeover chains.
 ## Mitigation
 Avoid user-controlled redirect targets; if needed, allowlist exact destination hosts or force
 same-origin/relative paths (reject `//`, `/\`, absolute URLs, and non-http schemes) after canonicalization;
-for OAuth, exact-match `redirect_uri` against pre-registered values; show an interstitial for external links.
+for OAuth, exact-match `redirect_uri` against pre-registered values; show an interstitial showing the destination for external links; prefer mapping an opaque id/short name to a
+server-side destination instead of accepting URLs.

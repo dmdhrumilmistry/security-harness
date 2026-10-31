@@ -25,7 +25,12 @@ State-changing route handlers (`POST`/`PUT`/`PATCH`/`DELETE`, or `GET` that muta
 1. From `codebase-map.json`, list state-changing endpoints and their auth mechanism.
 2. Check the global CSRF posture: is protection enabled framework-wide? Then find per-route exemptions.
 3. Check cookie flags: `SameSite=Lax/Strict` blocks most cross-site POSTs; `SameSite=None` re-opens it.
-4. Confirm the endpoint doesn't already require a non-ambient token or a custom header (which forces a
+   SameSite is scoped to the registrable domain, so sibling subdomains (XSS, takeover, multi-tenant hosts)
+   still send same-site requests. Lax also still sends cookies on top-level GET navigations.
+4. Check token quality: naive double-submit (unsigned cookie value) is defeated by cookie injection from a
+   sibling subdomain; tokens should be HMAC-bound to the session. Tokens in URLs or GET leak via Referer/logs.
+5. Check for client-side CSRF: URL hash/query values that build `fetch`/XHR requests carrying the token.
+6. Confirm the endpoint doesn't already require a non-ambient token or a custom header (which forces a
    preflight and blocks simple cross-site requests).
 
 ## Payloads / PoC
@@ -42,6 +47,9 @@ State-changing route handlers (`POST`/`PUT`/`PATCH`/`DELETE`, or `GET` that muta
   note residual risk for top-level GET navigations under Lax.
 - Auth is a header token the browser won't auto-attach cross-site (Bearer), not a cookie.
 - Endpoint requires a custom header (forces CORS preflight) and CORS is not permissive.
+- Server rejects cross-site requests via `Sec-Fetch-Site` (`cross-site` refused for non-safe methods) or an
+  exact-origin `Origin` check. Not a filter if it is prefix-matched, accepts `Origin: null`, or fails open on
+  missing headers.
 
 ## CWE / OWASP / severity
 CWE-352. OWASP A01:2021. Severity by action impact: account/email/password change or money transfer ->
@@ -53,5 +61,7 @@ attacker OAuth/app -> persistence; often combined with `access-control` to hit p
 
 ## Mitigation
 Enable framework CSRF protection on all state-changing routes (don't blanket-exempt); require a
-synchronizer or double-submit token; set session cookies `SameSite=Lax`/`Strict` + `Secure`; prefer
+synchronizer or double-submit token; set session cookies `SameSite=Lax`/`Strict` + `Secure` with the `__Host-` prefix; check `Sec-Fetch-Site`/exact
+`Origin` as defense in depth (roll out log-only first, never allow `Origin: null`); reject simple content types
+on JSON endpoints; use re-authentication for high-risk actions (CAPTCHA is not a CSRF defense); prefer
 non-ambient auth for APIs; require a custom header for JSON APIs and lock down CORS.
