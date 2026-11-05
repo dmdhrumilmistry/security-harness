@@ -42,6 +42,19 @@ State-changing route handlers (`POST`/`PUT`/`PATCH`/`DELETE`, or `GET` that muta
   note residual risk for top-level GET navigations under Lax.
 - Auth is a header token the browser won't auto-attach cross-site (Bearer), not a cookie.
 - Endpoint requires a custom header (forces CORS preflight) and CORS is not permissive.
+- Server rejects unsafe-method requests with `Sec-Fetch-Site: cross-site` (and `same-site` where sibling
+  subdomains are untrusted), with an Origin/Referer fallback that compares full origins and rejects
+  missing or `null` values.
+- Not a defense: CAPTCHA, or a naive double-submit cookie (cookie compared to a request value with no
+  session-bound HMAC) when sibling subdomains or cookie planting are possible.
+
+## Variants worth checking
+- **Login CSRF**: login form with no pre-session token lets an attacker sign the victim into the attacker's
+  account; also check that the session id is regenerated after authentication.
+- **Client-side CSRF**: front-end JS builds a request path/body from the URL fragment, query string, or
+  `postMessage`; this bypasses tokens and SameSite because the request is same-site and token-bearing.
+- **SameSite gaps**: `Lax` still sends cookies on top-level GET navigations (state-changing GET stays
+  exposed), and sibling-subdomain takeover or XSS yields same-site requests.
 
 ## CWE / OWASP / severity
 CWE-352. OWASP A01:2021. Severity by action impact: account/email/password change or money transfer ->
@@ -53,5 +66,5 @@ attacker OAuth/app -> persistence; often combined with `access-control` to hit p
 
 ## Mitigation
 Enable framework CSRF protection on all state-changing routes (don't blanket-exempt); require a
-synchronizer or double-submit token; set session cookies `SameSite=Lax`/`Strict` + `Secure`; prefer
-non-ambient auth for APIs; require a custom header for JSON APIs and lock down CORS.
+synchronizer token or a signed double-submit token (HMAC bound to the session, constant-time compare); set session cookies `SameSite=Lax`/`Strict` + `Secure`; prefer
+non-ambient auth for APIs; require a custom header for JSON APIs and lock down CORS; validate Fetch Metadata (`Sec-Fetch-Site`) with an Origin fallback; protect login forms.
