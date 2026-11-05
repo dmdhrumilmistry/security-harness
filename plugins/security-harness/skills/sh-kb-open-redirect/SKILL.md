@@ -39,7 +39,18 @@ Login/logout `?next=`/`?return_to=`/`?redirect=`/`?url=` params, post-action red
 - Target is forced relative (leading single `/` **and** not `//`/`/\`) after normalization, or resolved
   against the app origin and re-checked.
 - Destination validated against a strict host allowlist (exact host match, not substring/`endsWith`).
+- Validation uses a maintained URL parser and compares scheme, canonical host, and effective port against
+  an allowlist, rejects userinfo (`user@host`), and redirects to the exact validated value, not a string
+  modified afterwards.
 - Redirect target is server-chosen (not user input) or an opaque id mapped to a known URL.
+
+## Related checks
+- PHP: code after `header("Location: ...")` keeps running unless `exit`/`die` follows, so a "redirected"
+  unauthorized request may still execute its action.
+- Server-side forwards (Java `RequestDispatcher.forward`): confirm the user is authorized for the forwarded
+  target, not just the entry point (see `access-control`).
+- ASP.NET: `LocalRedirect`/`Url.IsLocalUrl` are the safe helpers; plain `Redirect(returnUrl)` after login is
+  the classic flaw.
 
 ## CWE / OWASP / severity
 CWE-601. OWASP A01:2021. Usually **medium** standalone; **high** when it leaks OAuth codes/tokens or is a
@@ -51,6 +62,6 @@ Open redirect + OAuth `redirect_uri` -> steal authorization code -> account take
 phishing credibility. Frequently the first hop in takeover chains.
 
 ## Mitigation
-Avoid user-controlled redirect targets; if needed, allowlist exact destination hosts or force
+Avoid user-controlled redirect targets (map an id/name to a server-side URL); if needed, allowlist exact destination hosts or force
 same-origin/relative paths (reject `//`, `/\`, absolute URLs, and non-http schemes) after canonicalization;
 for OAuth, exact-match `redirect_uri` against pre-registered values; show an interstitial for external links.
