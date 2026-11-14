@@ -4,6 +4,7 @@
 //! reflecting all the others. `indra mem` keeps that net of memories, and
 //! `indra serve` is a console over the agents of a harness.
 
+mod completions;
 mod deck;
 mod findings;
 mod mem;
@@ -32,7 +33,8 @@ use std::process::ExitCode;
     after_help = "Start here:\n  \
         indra serve --open           open the console in your browser\n  \
         indra claude -m qwen3-coder  Claude Code on a local model (Ollama)\n  \
-        indra update                 get the newest version"
+        indra update                 get the newest version (--auto on: by itself)\n  \
+        indra completions --install  Tab completion in your shell"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -79,8 +81,10 @@ enum Cmd {
     Review(review::ReviewArgs),
     /// Sync the skill mirror, or install the skills for an agent
     Skills(skills::SkillsArgs),
-    /// Update indra to the newest release (checks its SHA-256 first)
+    /// Update indra to the newest release (checks its SHA-256 first); --auto on keeps it up to date
     Update(update::UpdateArgs),
+    /// Tab completion for your shell: print the script, or --install it
+    Completions(completions::CompletionsArgs),
     /// Console users and roles: add, list, passwd, role, rm
     User(deck::users::UserArgs),
     /// Maintainer tools: build the website
@@ -107,6 +111,15 @@ enum DevCmd {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // Say what the daily release check found, and start today's. Not for
+    // update and completions themselves, nor the remote side of a node
+    // (its output is read by the hub).
+    if !matches!(
+        cli.cmd,
+        Cmd::Update(_) | Cmd::Completions(_) | Cmd::Node(_) | Cmd::Dev { .. }
+    ) {
+        update::on_start();
+    }
     let res = match cli.cmd {
         Cmd::Mem(a) => mem::cli::run(a),
         Cmd::Serve(a) => deck::cli::run_serve(a),
@@ -121,6 +134,7 @@ fn main() -> ExitCode {
         Cmd::Attach(a) => deck::cli::run_attach(a),
         Cmd::Claude(a) => deck::claude::run(a),
         Cmd::Update(a) => update::run(a),
+        Cmd::Completions(a) => completions::run(a),
         Cmd::User(a) => deck::users::run(a),
         Cmd::Publish(a) => publish::run(a),
         Cmd::Review(a) => review::run(a),

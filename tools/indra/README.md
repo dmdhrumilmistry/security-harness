@@ -35,10 +35,38 @@ curl -fsSL https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.
 irm https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.ps1 | iex       # Windows (PowerShell)
 ```
 
-Then `indra serve --open`. `indra update` gets the newest release later (`--check` only asks).
-The installers take `INDRA_VERSION=indra-v0.2.0` for a specific release and
-`INDRA_INSTALL_DIR` for another folder (default `~/.local/bin`, or
-`%LOCALAPPDATA%\Programs\indra`).
+Then `indra serve --open`. The installers also set up Tab completion for your shell. They take
+`INDRA_VERSION=indra-v0.2.0` for a specific release, `INDRA_INSTALL_DIR` for another folder
+(default `~/.local/bin`, or `%LOCALAPPDATA%\Programs\indra`), `INDRA_AUTO_UPDATE=1` to turn on
+automatic updates, and `INDRA_NO_COMPLETIONS=1` to skip completion.
+
+**Updates.** `indra update` installs the newest release (`--check` only asks; `--version` picks
+one), checking its SHA-256. Once a day, when you use indra in a terminal, it looks for a new
+release in the background and the next command tells you, at most once a day. To have it install
+new releases by itself:
+
+```bash
+indra update --auto on    # off: back to just telling you
+```
+
+The check runs at most once a day, in a detached `indra update --background`, never slows a
+command down, and also runs every few hours inside a long-running `indra serve` (the console's
+version shows when a new one is out; an automatic update takes effect when `indra serve`
+restarts). `INDRA_NO_UPDATE_CHECK=1` turns checks off entirely, and they are off under CI and for
+the remote side of a node. What it knows is in `<data dir>/update.json`.
+
+**Tab completion.** The installers set it up; by hand:
+
+```bash
+indra completions --install          # your shell (bash, zsh, fish, PowerShell)
+indra completions zsh > _indra       # or print the script for a shell and place it yourself
+indra completions --uninstall        # undo
+```
+
+For bash, zsh and PowerShell, `--install` writes the script under indra's data directory and one
+marked block (`# >>> indra completions >>>`) in `~/.bashrc`, `~/.zshrc` or `$PROFILE` that loads
+it; fish gets `~/.config/fish/completions/indra.fish`. `indra update` refreshes the script, so
+new commands complete after an update.
 
 **Prebuilt, by hand:** download `indra-<target>` from an `indra-v*`
 [release](https://github.com/dmdhrumilmistry/indra/releases) (each file has a `.sha256`, and

@@ -617,6 +617,7 @@ async fn overview(State(app): State<Arc<App>>, req: Request) -> Json<Value> {
     use crate::deck::users::Role;
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
+        "update": crate::update::summary(),
         // A viewer sees the console as read-only.
         "read_only": s.read_only || me.role == Role::Viewer,
         "user": me.user, "role": me.role.as_str(), "users": app.users.any(),

@@ -215,6 +215,13 @@ async fn serve(
         .await
         .map_err(|e| format!("cannot listen on {}: {}", s.bind, e))?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
+    // A console runs for weeks: look for a new release once a day here too.
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+            crate::update::maybe_check();
+        }
+    });
     let loopback = addr.ip().is_loopback();
     let host = if loopback {
         if addr.is_ipv6() {

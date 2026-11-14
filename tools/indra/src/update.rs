@@ -1,5 +1,10 @@
 //! `indra update`: replace this binary with the newest release (or a chosen
 //! one), after checking its SHA-256, the same way the install scripts do.
+//!
+//! Once a day, a command run in a terminal looks for a new release in the
+//! background (a detached `indra update --background`) and the next one says
+//! so. With `indra update --auto on` that background check also installs it.
+//! `INDRA_NO_UPDATE_CHECK=1` (or running under CI) turns all of it off.
 
 use axum::body::Bytes;
 use axum::http::{HeaderMap, HeaderValue};
@@ -20,6 +25,183 @@ pub struct UpdateArgs {
     /// Reinstall even when this is already the newest
     #[arg(long)]
     force: bool,
+    /// Keep indra up to date by itself: on (a daily check installs new
+    /// releases, checking their SHA-256) or off (it only tells you)
+    #[arg(long, value_name = "on|off", value_parser = ["on", "off"])]
+    auto: Option<String>,
+    /// The daily check (started by indra itself)
+    #[arg(long, hide = true)]
+    background: bool,
+}
+
+/// What the daily check knows, in `<data dir>/update.json`.
+#[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone, PartialEq)]
+pub struct State {
+    /// Install new releases by themselves.
+    #[serde(default)]
+    pub auto: bool,
+    /// When the last check started (unix seconds).
+    #[serde(default)]
+    pub checked: u64,
+    /// The newest release it found.
+    #[serde(default)]
+    pub latest: Option<String>,
+    /// When a "new release" line was last printed.
+    #[serde(default)]
+    pub noticed: u64,
+    /// An update the background check installed, not yet reported.
+    #[serde(default)]
+    pub updated: Option<String>,
+    /// Why the last automatic update failed.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+const DAY: u64 = 24 * 3600;
+
+fn state_path() -> std::path::PathBuf {
+    crate::paths::data_dir().join("update.json")
+}
+
+pub fn load() -> State {
+    std::fs::read(state_path())
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn save(st: &State) {
+    let p = state_path();
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let tmp = p.with_extension(format!("json.{}", std::process::id()));
+    if std::fs::write(&tmp, serde_json::to_vec_pretty(st).unwrap_or_default()).is_ok() {
+        let _ = std::fs::rename(&tmp, &p);
+    }
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// No checks at all: `INDRA_NO_UPDATE_CHECK` set (not "0"), or CI.
+pub fn checks_off() -> bool {
+    let set = |k: &str| {
+        std::env::var(k)
+            .map(|v| !v.is_empty() && v != "0" && v != "false")
+            .unwrap_or(false)
+    };
+    set("INDRA_NO_UPDATE_CHECK") || set("CI") || asset().is_none()
+}
+
+fn newer_than_here(tag: &str) -> bool {
+    match (parse(tag), parse(env!("CARGO_PKG_VERSION"))) {
+        (Some(t), Some(h)) => t > h,
+        _ => false,
+    }
+}
+
+/// What to print before a command runs, and the state to keep. Pure, so
+/// tests can drive it with any clock.
+pub fn notice(st: &mut State, at: u64) -> Option<String> {
+    if let Some(to) = st.updated.take() {
+        st.noticed = at;
+        return Some(format!(
+            "indra updated itself to {} (restart a running `indra serve` to use it; `indra update --auto off` stops this)",
+            to
+        ));
+    }
+    if at.saturating_sub(st.noticed) < DAY {
+        return None;
+    }
+    if st.auto {
+        if let Some(e) = st.error.clone() {
+            st.noticed = at;
+            return Some(format!(
+                "indra could not update itself ({}); run `indra update`",
+                e
+            ));
+        }
+        return None;
+    }
+    let latest = st.latest.clone().filter(|t| newer_than_here(t))?;
+    st.noticed = at;
+    Some(format!(
+        "indra {} is available (this is {}): run `indra update`, or `indra update --auto on` to stay up to date by itself",
+        latest.trim_start_matches("indra-v"),
+        env!("CARGO_PKG_VERSION")
+    ))
+}
+
+/// Before a command runs in a terminal: say what the last check found, and
+/// start today's check in the background if it is due.
+pub fn on_start() {
+    use std::io::IsTerminal;
+    if checks_off() || !std::io::stderr().is_terminal() {
+        return;
+    }
+    let mut st = load();
+    let before = st.clone();
+    if let Some(line) = notice(&mut st, now()) {
+        eprintln!("indra: {}", line);
+    }
+    if st != before {
+        save(&st);
+    }
+    maybe_check();
+}
+
+/// Start the background check when the last one is a day old.
+pub fn maybe_check() {
+    if checks_off() {
+        return;
+    }
+    let mut st = load();
+    let at = now();
+    if at.saturating_sub(st.checked) < DAY {
+        return;
+    }
+    st.checked = at;
+    save(&st);
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["update", "--background"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000 | 0x0000_0008); // no window, detached
+    }
+    if let Ok(mut child) = cmd.spawn() {
+        // Reap it, so a long-running console leaves no zombie.
+        std::thread::spawn(move || child.wait());
+    }
+}
+
+/// For the console: this version, the newest known, and the setting.
+pub fn summary() -> Value {
+    let st = load();
+    let latest = st.latest.clone().filter(|t| newer_than_here(t));
+    serde_json::json!({
+        "current": env!("CARGO_PKG_VERSION"),
+        "available": latest.map(|t| t.trim_start_matches("indra-v").to_string()),
+        "auto": st.auto,
+        "error": if st.auto { st.error.clone() } else { None },
+        "checks": !checks_off(),
+    })
 }
 
 /// The release asset built for this machine (see .github/workflows/indra.yml).
@@ -114,13 +296,64 @@ pub fn run(a: UpdateArgs) -> Result<ExitCode, String> {
         .block_on(go(a))
 }
 
+fn api() -> String {
+    std::env::var("INDRA_RELEASES_URL")
+        .unwrap_or_else(|_| format!("https://api.github.com/repos/{}/releases", REPO))
+}
+
+/// The daily check: note the newest release, and install it when automatic
+/// updates are on.
+async fn background() -> Result<ExitCode, String> {
+    let found = newest(&api()).await;
+    let mut st = load();
+    st.checked = now();
+    let tag = match found {
+        Ok(t) => t,
+        Err(e) => {
+            save(&st);
+            return Err(e);
+        }
+    };
+    st.latest = Some(tag.clone());
+    if st.auto && newer_than_here(&tag) {
+        match install(&tag).await {
+            Ok(_) => {
+                st.updated = Some(tag);
+                st.error = None;
+            }
+            Err(e) => st.error = Some(e),
+        }
+    }
+    save(&st);
+    Ok(ExitCode::SUCCESS)
+}
+
 async fn go(a: UpdateArgs) -> Result<ExitCode, String> {
-    let api = std::env::var("INDRA_RELEASES_URL")
-        .unwrap_or_else(|_| format!("https://api.github.com/repos/{}/releases", REPO));
-    let downloads = std::env::var("INDRA_DOWNLOAD_URL")
-        .unwrap_or_else(|_| format!("https://github.com/{}/releases/download", REPO));
-    let asset =
-        asset().ok_or("there is no prebuilt indra for this machine; build it from source")?;
+    if a.background {
+        return background().await;
+    }
+    if let Some(v) = &a.auto {
+        let mut st = load();
+        st.auto = v == "on";
+        st.error = None;
+        // Check soon, not a day from the last check.
+        st.checked = 0;
+        save(&st);
+        println!(
+            "{}",
+            if st.auto {
+                "Automatic updates are on: once a day, when you use indra, it looks for a new release in the background and installs it (checking its SHA-256). A running `indra serve` uses it after a restart. Turn off: indra update --auto off"
+            } else {
+                "Automatic updates are off: indra tells you when a new release is out, and `indra update` installs it."
+            }
+        );
+        if checks_off() {
+            println!("(Checks are off here: INDRA_NO_UPDATE_CHECK or CI is set.)");
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let api = api();
+    asset().ok_or("there is no prebuilt indra for this machine; build it from source")?;
     let tag = match &a.version {
         Some(v) if v.starts_with("indra-v") => v.clone(),
         Some(v) => format!("indra-v{}", v.trim_start_matches('v')),
@@ -131,6 +364,12 @@ async fn go(a: UpdateArgs) -> Result<ExitCode, String> {
         (Some(t), Some(h)) => t > h,
         _ => true,
     };
+    if a.version.is_none() {
+        let mut st = load();
+        st.latest = Some(tag.clone());
+        st.checked = now();
+        save(&st);
+    }
     if a.check {
         println!(
             "{}",
@@ -143,12 +382,32 @@ async fn go(a: UpdateArgs) -> Result<ExitCode, String> {
                 format!("indra {} is the newest ({})", here, tag)
             }
         );
+        println!(
+            "Automatic updates: {}",
+            if load().auto {
+                "on (indra update --auto off to stop)"
+            } else {
+                "off (indra update --auto on to stay up to date by itself)"
+            }
+        );
         return Ok(ExitCode::SUCCESS);
     }
     if !newer && !a.force && a.version.is_none() {
         println!("indra {} is already the newest ({}).", here, tag);
         return Ok(ExitCode::SUCCESS);
     }
+    let exe = install(&tag).await?;
+    println!("Updated indra {} -> {} ({})", here, tag, exe.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Download `tag` for this machine, check its SHA-256 and put it in place of
+/// this binary. Shell completions set up earlier are refreshed from it.
+async fn install(tag: &str) -> Result<std::path::PathBuf, String> {
+    let downloads = std::env::var("INDRA_DOWNLOAD_URL")
+        .unwrap_or_else(|_| format!("https://github.com/{}/releases/download", REPO));
+    let asset =
+        asset().ok_or("there is no prebuilt indra for this machine; build it from source")?;
     eprintln!("indra: downloading {} {} ...", tag, asset);
     let bin = get(&format!("{}/{}/{}", downloads, tag, asset)).await?;
     let sum = get(&format!("{}/{}/{}.sha256", downloads, tag, asset)).await?;
@@ -175,6 +434,8 @@ async fn go(a: UpdateArgs) -> Result<ExitCode, String> {
     let dir = exe.parent().ok_or("cannot tell where indra is installed")?;
     let fresh = dir.join(format!(".indra-update-{}", std::process::id()));
     std::fs::write(&fresh, &bin).map_err(|e| {
+        // Leave no half-written copy behind (a full disk, say).
+        let _ = std::fs::remove_file(&fresh);
         format!(
             "cannot write to {} ({}); reinstall with the install script, or run this with permission to write there",
             dir.display(),
@@ -184,8 +445,10 @@ async fn go(a: UpdateArgs) -> Result<ExitCode, String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| e.to_string())?;
+        std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).map_err(|e| {
+            let _ = std::fs::remove_file(&fresh);
+            e.to_string()
+        })?;
     }
     // A running program can be renamed (Windows) or replaced (Unix) in place.
     #[cfg(windows)]
@@ -198,8 +461,14 @@ async fn go(a: UpdateArgs) -> Result<ExitCode, String> {
         let _ = std::fs::remove_file(&fresh);
         return Err(format!("cannot replace {}: {}", exe.display(), e));
     }
-    println!("Updated indra {} -> {} ({})", here, tag, exe.display());
-    Ok(ExitCode::SUCCESS)
+    // The new binary knows its own commands: let it rewrite the completions.
+    let _ = std::process::Command::new(&exe)
+        .args(["completions", "--refresh"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    Ok(exe)
 }
 
 #[cfg(test)]
@@ -214,6 +483,42 @@ mod tests {
         assert!(parse("indra-v0.10.0") > parse("0.9.9"));
         assert_eq!(parse("nope"), None);
         assert!(asset().is_some(), "every CI platform has a release asset");
+    }
+
+    #[test]
+    fn the_daily_notice() {
+        let t0 = 10 * DAY;
+        // Nothing known yet: quiet.
+        let mut st = State::default();
+        assert_eq!(notice(&mut st, t0), None);
+        // An older or the same release: quiet.
+        st.latest = Some(format!("indra-v{}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(notice(&mut st, t0), None);
+        // A newer one: said once a day.
+        st.latest = Some("indra-v99.0.0".into());
+        let line = notice(&mut st, t0).unwrap();
+        assert!(line.contains("99.0.0 is available") && line.contains("--auto on"));
+        assert_eq!(notice(&mut st, t0 + 3600), None);
+        assert!(notice(&mut st, t0 + DAY + 1).is_some());
+        // With automatic updates the background check installs it: no nagging...
+        let mut st = State {
+            auto: true,
+            latest: Some("indra-v99.0.0".into()),
+            ..Default::default()
+        };
+        assert_eq!(notice(&mut st, t0), None);
+        // ...but the next command says it happened, once.
+        st.updated = Some("indra-v99.0.0".into());
+        assert!(notice(&mut st, t0)
+            .unwrap()
+            .contains("updated itself to indra-v99.0.0"));
+        assert_eq!(st.updated, None);
+        // And says why it could not.
+        st.error = Some("cannot write to /usr/local/bin".into());
+        assert_eq!(notice(&mut st, t0 + 60), None, "not twice in a day");
+        assert!(notice(&mut st, t0 + 2 * DAY)
+            .unwrap()
+            .contains("could not update itself"));
     }
 
     #[tokio::test]

@@ -119,7 +119,8 @@ That's it. The console opens in your browser: launch agents, watch them, read th
 | Run agents on another machine too | install there the same way, then paste the line the console shows under **Nodes > Add a machine** |
 | Run Claude Code on a local model (Ollama) | `indra claude -m qwen3-coder --pull` |
 | Give a team accounts and roles | `indra user add alice` (see [users and roles](docs/guides/users-and-roles.md)) |
-| Get the newest version | `indra update` |
+| Get the newest version | `indra update` (or `indra update --auto on` to stay up to date by itself) |
+| Tab completion in my shell | set up by the installer; else `indra completions --install` |
 | Uninstall | delete the `indra` file (`~/.local/bin/indra`, or `%LOCALAPPDATA%\Programs\indra` on Windows) |
 
 It is one program for every role: the same file is the console on your laptop and the agent

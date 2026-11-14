@@ -11,6 +11,8 @@
 #   INDRA_VERSION=indra-v0.2.0     a specific release instead of the newest
 #   INDRA_INSTALL_DIR=/usr/local/bin   where to put it
 #   INDRA_NO_MODIFY_PATH=1         do not add the folder to your shell's PATH
+#   INDRA_NO_COMPLETIONS=1         do not set up Tab completion for your shell
+#   INDRA_AUTO_UPDATE=1            keep indra up to date by itself (indra update --auto on)
 #   INDRA_RELEASES_URL=...         another releases API (a mirror, or tests)
 set -eu
 
@@ -94,9 +96,18 @@ if [ "$on_path" = 0 ] && [ -z "${INDRA_NO_MODIFY_PATH:-}" ]; then
   say "Added $DIR to your PATH (open a new terminal, or run: $line)"
 fi
 
+# Tab completion for the user's shell (bash, zsh, fish), once; rerunning
+# replaces it in place. Releases before 0.4.0 have no `completions`.
+if [ -z "${INDRA_NO_COMPLETIONS:-}" ] && "$DIR/indra" completions --install --quiet >/dev/null 2>&1; then
+  say "Tab completion is set up for $(basename "${SHELL:-your shell}") (open a new terminal; undo: indra completions --uninstall)"
+fi
+if [ -n "${INDRA_AUTO_UPDATE:-}" ] && "$DIR/indra" update --auto on >/dev/null 2>&1; then
+  say "Automatic updates are on (turn off: indra update --auto off)"
+fi
+
 say ""
 say "Next: start the console and open it in your browser:"
 say ""
 say "    indra serve --open"
 say ""
-say "Update later with: indra update"
+say "Update later with: indra update   (or let it update itself: indra update --auto on)"
