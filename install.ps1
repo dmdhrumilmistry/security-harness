@@ -7,7 +7,9 @@
 # to your PATH, and tells you the one command to run next. Run it again to update.
 #
 # Settings (all optional): $env:INDRA_VERSION = "indra-v0.2.0", $env:INDRA_INSTALL_DIR,
-# $env:INDRA_NO_MODIFY_PATH = "1", $env:INDRA_RELEASES_URL, $env:INDRA_DOWNLOAD_URL.
+# $env:INDRA_NO_MODIFY_PATH = "1", $env:INDRA_RELEASES_URL, $env:INDRA_DOWNLOAD_URL,
+# $env:INDRA_NO_COMPLETIONS = "1" (no Tab completion), $env:INDRA_AUTO_UPDATE = "1"
+# (keep indra up to date by itself).
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -62,9 +64,22 @@ if (-not $env:INDRA_NO_MODIFY_PATH -and -not (($userPath -split ';') -contains $
   Write-Host "Added $dir to your PATH (new terminals see it)."
 }
 
+# Tab completion in PowerShell: a script under indra's data folder, loaded
+# from this user's $PROFILE (releases before 0.4.0 have no `completions`).
+if (-not $env:INDRA_NO_COMPLETIONS) {
+  $env:INDRA_PS_PROFILE = $PROFILE
+  & $dest completions powershell --install --quiet *> $null
+  if ($LASTEXITCODE -eq 0) { Write-Host "Tab completion is set up for PowerShell (open a new terminal; undo: indra completions powershell --uninstall)" }
+  Remove-Item Env:INDRA_PS_PROFILE -ErrorAction SilentlyContinue
+}
+if ($env:INDRA_AUTO_UPDATE) {
+  & $dest update --auto on *> $null
+  if ($LASTEXITCODE -eq 0) { Write-Host "Automatic updates are on (turn off: indra update --auto off)" }
+}
+
 Write-Host ""
 Write-Host "Next: start the console and open it in your browser:"
 Write-Host ""
 Write-Host "    indra serve --open"
 Write-Host ""
-Write-Host "Update later with: indra update"
+Write-Host "Update later with: indra update   (or let it update itself: indra update --auto on)"

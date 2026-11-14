@@ -3260,7 +3260,14 @@
       var sel = $("harness"); sel.textContent = "";
       ov.harnesses.forEach(function (x) { sel.appendChild(h("option", { value: x.name, text: x.name })); });
       sel.value = S.h;
-      $("version").textContent = "v" + ov.version;
+      var ver = $("version"); ver.textContent = "v" + ov.version; ver.title = "";
+      var up = ov.update || {};
+      if (up.available) {
+        ver.appendChild(h("span", { class: "pill warn small", text: up.auto ? "v" + up.available + " installed: restart" : "v" + up.available + " out" }));
+        ver.title = up.auto
+          ? (up.error ? "Could not update itself: " + up.error + ". Run indra update." : "indra " + up.available + " was installed by the automatic update; restart indra serve to use it.")
+          : "indra " + up.available + " is available: run indra update (or indra update --auto on to stay up to date by itself).";
+      }
       $("ro-badge").hidden = !ov.read_only;
       // Who is signed in, and what only admins can open.
       var who = $("who"); who.textContent = "";

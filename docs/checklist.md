@@ -72,6 +72,10 @@ their section; nothing is deleted, items are checked off with the change that di
       the Terminal page with Close (ends background jobs too)
 - [x] Cut `indra-v0.3.0` so `indra update` brings the icon fix, workflow inputs, users and
       terminal tabs to installs of 0.2.0
+- [x] Automatic updates: a daily background check tells you about new releases, and
+      `indra update --auto on` installs them by itself (SHA-256 checked; the console shows it too)
+- [x] Tab completion: `indra completions` for bash, zsh, fish and PowerShell, set up by the
+      installers, refreshed by `indra update`
 
 ## Not planned yet (the docs say so)
 
