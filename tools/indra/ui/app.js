@@ -53,6 +53,15 @@
     setTimeout(function () { t.remove(); }, bad ? 6000 : 2600);
   }
 
+  // A toast with one button (e.g. Undo), shown a little longer.
+  function toastAction(msg, label, fn) {
+    Array.prototype.forEach.call(document.querySelectorAll(".toast"), function (x) { x.remove(); });
+    var t = h("div", { class: "toast act", role: "status" }, h("span", { text: msg }),
+      h("button", { type: "button", onclick: function () { t.remove(); fn(); } }, label));
+    document.body.appendChild(t);
+    setTimeout(function () { t.remove(); }, 7000);
+  }
+
   var S = { ov: null, h: store("indra.h") || "", cleanup: [] };
 
   // Save text as a file the browser downloads.
@@ -1494,7 +1503,8 @@
     var runsBox = h("div"), defsBox = h("div", { class: "grid" });
     var defsSig = null;
     m.appendChild(h("h2", { text: "Runs" })); m.appendChild(runsBox);
-    m.appendChild(h("h2", { text: "Configured workflows" })); m.appendChild(defsBox);
+    var errBox = h("div");
+    m.appendChild(h("h2", { text: "Workflows" })); m.appendChild(errBox); m.appendChild(defsBox);
     function loadRuns() {
       api("/api/workflows").then(function (w) {
         runsBox.textContent = "";
@@ -1510,18 +1520,23 @@
               h("td", { class: "muted", text: ago(r.started) }));
           })))));
         // Redrawn only when they change, so an open Run form survives the refresh.
-        var sig = JSON.stringify(w.defs);
+        var sig = JSON.stringify([w.defs, w.errors]);
         if (sig === defsSig) return;
         defsSig = sig;
-        defsBox.textContent = "";
+        defsBox.textContent = ""; errBox.textContent = "";
+        if ((w.errors || []).length) errBox.appendChild(h("div", { class: "note warn" }, h("b", { text: "Workflow files in repositories that are not used:" }),
+          h("ul", null, w.errors.map(function (e) { return h("li", { class: "small", text: e }); })),
+          h("span", { class: "small", text: "A workflow shared in a repository can name a profile or node only its author has: add one with that name (Settings), or edit the file." })));
         if (!w.defs.length) defsBox.appendChild(h("div", { class: "card" }, h("h4", { text: "No workflows configured" }),
           h("p", { class: "muted", text: "Chain agent tasks across machines, in dependency order. Or use a fan-out below." }),
           canEdit() ? h("a", { class: "btn", href: "#/wfedit/", text: "Create a workflow" }) : null));
         w.defs.forEach(function (d) {
           var formBox = h("div");
           defsBox.appendChild(h("div", { class: "card" },
-            h("div", { class: "row" }, h("h4", { text: d.name }), h("span", { class: "pill", text: d.task.length + " tasks" })),
+            h("div", { class: "row" }, h("h4", { text: d.name }), h("span", { class: "pill", text: d.task.length + (d.task.length === 1 ? " task" : " tasks") }),
+              d.builtin ? h("span", { class: "pill", text: "built in" }) : d.source ? h("span", { class: "pill ok", title: d.source, text: "in a repository" }) : h("span", { class: "pill", title: "In this machine's indra.toml", text: "local" })),
             d.description ? h("p", { class: "muted", text: d.description }) : null,
+            d.source ? h("p", { class: "muted small clip1", title: d.source }, h("code", { text: d.source })) : null,
             h("ul", { class: "links" }, d.task.map(function (t) {
               return h("li", null, h("b", { text: t.id }), h("span", { class: "muted", text: "  on " + t.node + ((t.needs || []).length ? ", after " + t.needs.join(", ") : "") }));
             })),
@@ -2065,7 +2080,11 @@
     var claudeProfiles = (S.ov.profiles || []).filter(function (p) { return !p.runner || p.runner === "claude"; });
     var prof = h("select", { "aria-label": "Claude Code profile" }, h("option", { value: "", text: "no profile (your own Claude Code setup)" }),
       claudeProfiles.map(function (p) { return h("option", { value: p.name, text: p.name + (p.provider === "ollama" ? "  (on Ollama: " + (p.model || "?") + ")" : p.subagent_provider === "ollama" ? "  (subagents on Ollama)" : "") }); }));
-    var claudeLinks = [];
+    var claudeLinks = [], shellLinks = [];
+    var shells = S.ov.shells || [];
+    var shellSel = h("select", { "aria-label": "Shell" }, shells.map(function (p, i) { return h("option", { value: i ? p : "", text: p.split(/[\\/]/).pop() + (i ? "" : " (default)") }); }));
+    shellSel.addEventListener("change", function () { shellLinks.forEach(function (x) { x.a.termParams = shellAt(x.at); x.a.href = termUrl(x.a.termParams); }); });
+    function shellAt(at) { return Object.assign({ what: "shell" }, at, shellSel.value ? { shell: shellSel.value } : {}); }
     function claudeAt(at) { return Object.assign({ what: "claude" }, at, prof.value ? { profile: prof.value } : {}); }
     prof.addEventListener("change", function () { claudeLinks.forEach(function (x) { x.a.termParams = claudeAt(x.at); x.a.href = termUrl(x.a.termParams); }); });
     m.appendChild(h("div", { class: "card" },
@@ -2073,12 +2092,14 @@
       h("p", { class: "muted", text: "Opens in the terminals tab (one tab, a tab inside it per terminal), in the directory you pick. Close a terminal with its \u00d7, or below." }),
       hasClaude && claudeProfiles.length ? h("div", { class: "row termprof" }, h("span", { class: "muted small", text: "Claude Code with" }), prof,
         h("span", { class: "muted small", text: "A profile on Ollama runs Claude Code on that local model; see the local models guide." })) : null,
+      shells.length > 1 ? h("div", { class: "row termprof" }, h("span", { class: "muted small", text: "Shell" }), shellSel,
+        h("span", { class: "muted small" }, "The default and its arguments are in ", h("a", { href: "#/settings/general", text: "Settings > General" }), ".")) : null,
       targets.length ? h("div", { class: "rowlist" }, targets.map(function (t, i) {
         var at = hs.targets.length ? { h: hs.name, target: i } : { h: hs.name };
         var ca = hasClaude ? termLink("Claude Code", claudeAt(at)) : null;
         if (ca) claudeLinks.push({ a: ca, at: at });
         return h("div", { class: "rowitem" }, h("code", { class: "grow", text: t }), h("span", { class: "row" },
-          termLink("Shell", Object.assign({ what: "shell" }, at)), ca));
+          (function () { var sl = termLink("Shell", shellAt(at)); shellLinks.push({ a: sl, at: at }); return sl; })(), ca));
       })) : empty("No harness, so no directory to start in.")));
     var running = h("div");
     m.appendChild(h("div", { class: "card" },
@@ -2341,7 +2362,7 @@
     var add = h("button", { class: "primary", type: "button", disabled: ro }, "New item");
     var exportBtn = h("button", { type: "button", onclick: function () {
       if (!data) return;
-      jsonFile("board.json", data.items.map(function (it) { return { title: it.title, body: it.body, labels: it.labels, column: it.column, profile: it.profile, runner: it.runner, node: it.node, target: it.target, source: it.source, result: it.result }; }));
+      jsonFile((cur === "main" ? "board" : "board-" + cur) + ".json", mine().map(function (it) { return { title: it.title, body: it.body, labels: it.labels, column: it.column, profile: it.profile, runner: it.runner, node: it.node, target: it.target, source: it.source, result: it.result }; }));
     } }, "Export");
     var importFile = h("button", { type: "button", disabled: ro, onclick: function () {
       pickFiles({ accept: ".json,application/json" }).then(function (fs) {
@@ -2349,7 +2370,7 @@
         var got; try { got = listFrom(fs[0].text); } catch (e) { toast(fs[0].name + ": " + e.message, true); return; }
         got = got.filter(function (x) { return x && x.title; });
         Promise.all(got.map(function (x) {
-          var b = { title: String(x.title), body: x.body || "", labels: x.labels || [] };
+          var b = { title: String(x.title), body: x.body || "", labels: x.labels || [], board: cur };
           ["profile", "runner", "node", "target"].forEach(function (k) { if (x[k]) b[k] = x[k]; });
           if (x.column && ["todo", "review", "done"].indexOf(x.column) >= 0) b.column = x.column;
           return api("/api/board/items", { method: "POST", body: b });
@@ -2357,9 +2378,61 @@
       });
     } }, "Import file");
     m.appendChild(header("Board", "Work for agents. Run an item with a profile; when the agent finishes it moves to Review (or Failed), and you move it to Done. Items from Jira, ClickUp or GitHub report every move back.", [importBox, exportBtn, importFile, add]));
+    var boardBar = h("div", { class: "row boardbar", role: "tablist", "aria-label": "Boards" });
     var lanes = h("div", { class: "lanes" }), detail = h("div");
-    m.appendChild(lanes); m.appendChild(detail);
-    var data = null, open = null;
+    m.appendChild(boardBar); m.appendChild(lanes); m.appendChild(detail);
+    var data = null, open = null, cur = store("indra.board") || "main";
+    function mine() { return data.items.filter(function (i) { return (i.board || "main") === cur; }); }
+    function boardName(id) { var b = (data.boards || []).find(function (x) { return x.id === id; }); return b ? b.name : id; }
+    function pick(id) { cur = id; store("indra.board", id); showDetail(null); render(); }
+    function newBoard() {
+      var nm = h("input", { type: "text", required: true, "aria-label": "Board name", placeholder: "e.g. API team, Q3 pentest, Bugs" });
+      var ds = h("input", { type: "text", "aria-label": "Description", placeholder: "What it is for (optional)" });
+      detail.textContent = "";
+      detail.appendChild(h("form", { class: "form card", onsubmit: function (e) {
+        e.preventDefault();
+        api("/api/boards", { method: "POST", body: { name: nm.value, description: ds.value } })
+          .then(function (r) { toast("Board " + nm.value + " created"); detail.textContent = ""; cur = r.id; store("indra.board", r.id); load(); })
+          .catch(function (err) { toast(err.message, true); });
+      } }, h("h2", { text: "New board" }), h("label", null, "Name", nm), h("label", null, "Description", ds),
+        h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Create"), h("button", { type: "button", onclick: function () { detail.textContent = ""; } }, "Cancel"))));
+      nm.focus();
+    }
+    function boardSettings() {
+      var b = (data.boards || []).find(function (x) { return x.id === cur; }); if (!b) return;
+      var nm = h("input", { type: "text", required: true, value: b.name, "aria-label": "Board name" });
+      var ds = h("input", { type: "text", value: b.description || "", "aria-label": "Description" });
+      var checks = data.connectors.map(function (c) {
+        var owner = (data.boards || []).find(function (x) { return (x.connectors || []).indexOf(c.name) >= 0; });
+        var cb = h("input", { type: "checkbox", value: c.name });
+        cb.checked = (b.connectors || []).indexOf(c.name) >= 0;
+        return { cb: cb, el: h("label", { class: "check" }, cb, " " + c.name + " (" + c.kind + " " + c.project + ")",
+          owner && owner.id !== b.id ? h("span", { class: "muted small", text: "  now imports into " + owner.name }) : null) };
+      });
+      var others = (data.boards || []).filter(function (x) { return x.id !== b.id; });
+      var moveTo = h("select", { "aria-label": "Move its items to" }, others.map(function (x) { return h("option", { value: x.id, text: "Move its items to " + x.name }); }),
+        h("option", { value: "", text: "Delete its items with it" }));
+      var count = mine().length;
+      detail.textContent = "";
+      detail.appendChild(h("form", { class: "form card", onsubmit: function (e) {
+        e.preventDefault();
+        api("/api/boards/" + encodeURIComponent(b.id), { method: "PUT", body: { name: nm.value, description: ds.value,
+          connectors: checks.filter(function (x) { return x.cb.checked; }).map(function (x) { return x.cb.value; }) } })
+          .then(function () { toast("Saved board " + nm.value); detail.textContent = ""; load(); }).catch(function (err) { toast(err.message, true); });
+      } }, h("h2", { text: "Board: " + b.name }), h("label", null, "Name", nm), h("label", null, "Description", ds),
+        h("fieldset", null, h("legend", { text: "Import from these trackers" }),
+          checks.length ? checks.map(function (x) { return x.el; }) : h("p", { class: "muted small" }, "No trackers connected yet. ", canEdit() ? h("a", { href: "#/settings/connectors", text: "Connect Jira, ClickUp, GitHub or Linear" }) : null),
+          h("p", { class: "muted small", text: "Items a tracker imports land on the board that has it ticked (each tracker feeds one board); unticked trackers feed the first board." })),
+        h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Save"), h("button", { type: "button", onclick: function () { detail.textContent = ""; } }, "Cancel")),
+        b.id === "main" ? h("p", { class: "muted small", text: "The first board cannot be deleted; rename it if you like." }) :
+          h("div", { class: "row danger-zone" }, count ? moveTo : null, h("button", { type: "button", class: "danger", onclick: function () {
+            var to = count ? moveTo.value : "";
+            if (!window.confirm("Delete board " + b.name + "?" + (count ? (to ? " Its " + count + " item(s) move to " + boardName(to) + "." : " Its " + count + " item(s) are deleted (tracker items are not touched).") : ""))) return;
+            api("/api/boards/" + encodeURIComponent(b.id) + (to ? "?move_to=" + encodeURIComponent(to) : ""), { method: "DELETE" })
+              .then(function () { toast("Deleted board " + b.name); detail.textContent = ""; pick(to || "main"); load(); }).catch(function (err) { toast(err.message, true); });
+          } }, "Delete board"))));
+      nm.focus();
+    }
     function patch(id, body) {
       return api("/api/board/items/" + id, { method: "PATCH", body: body }).then(load).catch(function (e) { toast(e.message, true); });
     }
@@ -2382,15 +2455,16 @@
       var f = { title: h("input", { type: "text", value: it.title, required: true }), body: h("textarea", null),
         labels: h("input", { type: "text", value: (it.labels || []).join(", "), placeholder: "comma separated" }),
         profile: h("select", null, h("option", { value: "", text: "none" }), (ov.profiles || []).map(function (p) { return h("option", { value: p.name, text: p.name }); })),
-        target: h("input", { type: "text", value: it.target || "", placeholder: "the harness's first target" }) };
-      f.body.value = it.body || ""; f.profile.value = it.profile || "";
+        target: h("input", { type: "text", value: it.target || "", placeholder: "the harness's first target" }),
+        board: h("select", null, (data.boards || []).map(function (b) { return h("option", { value: b.id, text: b.name }); })) };
+      f.body.value = it.body || ""; f.profile.value = it.profile || ""; f.board.value = it.board || "main";
       detail.textContent = "";
       detail.appendChild(h("form", { class: "form card", onsubmit: function (e) {
         e.preventDefault();
-        api("/api/board/items/" + it.id, { method: "PATCH", body: { title: f.title.value, body: f.body.value, labels: csv(f.labels.value), profile: f.profile.value, target: f.target.value.trim() } })
+        api("/api/board/items/" + it.id, { method: "PATCH", body: { title: f.title.value, body: f.body.value, labels: csv(f.labels.value), profile: f.profile.value, target: f.target.value.trim(), board: f.board.value } })
           .then(function (x) { toast("Saved #" + it.id); load(); showDetail(x); }).catch(function (err) { toast(err.message, true); });
       } }, h("h3", { text: "Edit #" + it.id }), h("label", null, "Title", f.title), h("label", null, "Description", f.body), h("label", null, "Labels", f.labels),
-        h("div", { class: "row" }, h("label", null, "Profile", f.profile), h("label", null, "Target", f.target)),
+        h("div", { class: "row" }, h("label", null, "Profile", f.profile), h("label", null, "Target", f.target), (data.boards || []).length > 1 ? h("label", null, "Board", f.board) : null),
         it.source ? h("p", { class: "muted small", text: "Changes stay on the board; the item in " + it.source.connector + " is not edited." }) : null,
         h("div", { class: "row" }, h("button", { type: "submit", class: "primary" }, "Save"), h("button", { type: "button", onclick: function () { showDetail(it); } }, "Cancel"))));
     }
@@ -2425,9 +2499,20 @@
       return c;
     }
     function render() {
+      if (!(data.boards || []).some(function (b) { return b.id === cur; })) cur = "main";
+      boardBar.textContent = "";
+      (data.boards || []).forEach(function (b) {
+        var n = data.items.filter(function (i) { return (i.board || "main") === b.id; }).length;
+        boardBar.appendChild(h("button", { type: "button", role: "tab", class: "boardtab" + (b.id === cur ? " on" : ""), "aria-selected": b.id === cur ? "true" : "false",
+          title: b.description || b.name, onclick: function () { pick(b.id); } }, b.name, h("span", { class: "muted", text: " " + n })));
+      });
+      if (!ro) {
+        boardBar.appendChild(h("button", { type: "button", class: "ghost", onclick: newBoard }, "+ New board"));
+        boardBar.appendChild(h("button", { type: "button", class: "ghost", title: "Rename, choose its trackers, or delete it", onclick: boardSettings }, "Board settings"));
+      }
       lanes.textContent = "";
       COLS.forEach(function (col) {
-        var items = data.items.filter(function (i) { return i.column === col[0]; });
+        var items = mine().filter(function (i) { return i.column === col[0]; });
         var lane = h("div", { class: "lane " + col[0] }, h("h3", null, col[1], h("span", { class: "muted", text: " " + items.length })), items.map(card));
         if (col[0] !== "running" && !ro) {
           lane.addEventListener("dragover", function (e) { e.preventDefault(); lane.classList.add("over"); });
@@ -2442,7 +2527,11 @@
         lanes.appendChild(lane);
       });
       importBox.textContent = "";
-      data.connectors.forEach(function (c) {
+      // A tracker imports into its own board: offer it on that board only.
+      data.connectors.filter(function (c) {
+        var owner = (data.boards || []).find(function (b) { return (b.connectors || []).indexOf(c.name) >= 0; });
+        return (owner ? owner.id : "main") === cur;
+      }).forEach(function (c) {
         importBox.appendChild(h("button", { type: "button", disabled: ro, title: c.kind + " " + c.project + (c.auto_run ? ", runs new items automatically" : ""), onclick: function (e) {
           e.target.disabled = true;
           api("/api/board/import", { method: "POST", body: { connector: c.name } })
@@ -2461,9 +2550,9 @@
       detail.textContent = "";
       detail.appendChild(h("form", { class: "form card", onsubmit: function (e) {
         e.preventDefault();
-        api("/api/board/items", { method: "POST", body: { title: title.value, body: body.value, profile: prof.value || null } })
+        api("/api/board/items", { method: "POST", body: { title: title.value, body: body.value, profile: prof.value || null, board: cur } })
           .then(function () { detail.textContent = ""; load(); }).catch(function (err) { toast(err.message, true); });
-      } }, h("h2", { text: "New item" }), h("label", null, "Title", title), h("label", null, "Details", body), h("label", null, "Profile", prof),
+      } }, h("h2", { text: "New item on " + boardName(cur) }), h("label", null, "Title", title), h("label", null, "Details", body), h("label", null, "Profile", prof),
         h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Add to To do"), h("button", { type: "button", onclick: function () { detail.textContent = ""; } }, "Cancel"))));
       title.focus();
     });
@@ -2476,7 +2565,10 @@
   // workflows (run as one step). Saving writes ordinary [[workflow]] TOML,
   // positions included, so `indra run` and the text editor keep working.
   function pageWorkflowEditor(m, name) {
-    var c = null, wf = null, original = name || null, sel = null, selEdge = null, dirty = false;
+    var c = null, wf = null, original = name || null, sel = null, selEdge = null, dirty = false, skills = [];
+    // Where the workflow lives: { kind: "config" } (this machine's indra.toml) or
+    // { kind: "repo", repo: dir, file: path } (committed with a repository).
+    var loc = { kind: "config" }, was = null;
     var palette = h("div", { class: "palette", "aria-label": "Add to the workflow" });
     var scroller = h("div", { class: "canvas-scroll" });
     var canvas = h("div", { class: "canvas", role: "application", "aria-label": "Workflow graph" });
@@ -2486,11 +2578,22 @@
     var status = h("span", { class: "muted small" });
     var save = h("button", { class: "primary", type: "button" }, "Save");
     var layoutBtn = h("button", { type: "button" }, "Tidy layout");
-    m.appendChild(header(original ? "Edit workflow " + original : "New workflow", "Drag tasks, components and workflows in from the left. Drag from a task's right edge to another task to make the second run after the first. Select an arrow and press Delete to remove it.", [status, layoutBtn, save]));
+    m.appendChild(header(original ? "Edit workflow " + original : "New workflow", "Drag tasks, skills, saved tasks and workflows in from the left. Drag from a step's right edge to another step to make the second run after the first. Select a step or an arrow and press Delete (or its \u00d7) to remove it.", [status, layoutBtn, save]));
     m.appendChild(h("div", { class: "wfedit" }, palette, scroller, inspector));
     m.appendChild(modelList() || h("span"));
 
     function changed() { dirty = true; status.textContent = "Unsaved changes"; }
+    function repoFiles() { return (c.repo && c.repo.files) || []; }
+    function allWorkflows() {
+      var out = (c.config.workflow || []).slice();
+      repoFiles().forEach(function (f) { (f.workflows || []).forEach(function (w) { if (!out.some(function (x) { return x.name === w.name; })) out.push(w); }); });
+      return out;
+    }
+    function allComponents() {
+      var out = (c.config.component || []).slice();
+      repoFiles().forEach(function (f) { (f.components || []).forEach(function (x) { if (!out.some(function (y) { return y.name === x.name; })) out.push(x); }); });
+      return out;
+    }
     function task(id) { return wf.task.find(function (t) { return t.id === id; }); }
     function uniqueId(base) { var i = 1, id = base; while (task(id)) { i++; id = base + "-" + i; } return id; }
     function depth() {
@@ -2513,14 +2616,15 @@
       while (stack.length) { var id = stack.pop(); if (id === from) return true; if (seen[id]) continue; seen[id] = 1; var t = task(id); if (t) stack = stack.concat(t.needs || []); }
       return false;
     }
-    function kind(t) { return t.workflow ? "workflow " + t.workflow : t.component ? "component " + t.component : "task"; }
+    function kind(t) { return t.workflow ? "workflow " + t.workflow : t.skill ? "skill " + t.skill : t.component ? "saved task " + t.component : "task"; }
 
     function draw() {
       Array.prototype.slice.call(canvas.querySelectorAll(".gnode")).forEach(function (n) { n.remove(); });
       while (svg.firstChild) svg.removeChild(svg.firstChild);
       var maxX = 900, maxY = 500;
       wf.task.forEach(function (t) {
-        var n = h("div", { class: "gnode" + (sel === t.id ? " sel" : "") + (t.workflow ? " sub" : t.component ? " comp" : ""), tabindex: "0", "data-id": t.id },
+        var n = h("div", { class: "gnode" + (sel === t.id ? " sel" : "") + (t.workflow ? " sub" : t.skill ? " skill" : t.component ? " comp" : ""), tabindex: "0", "data-id": t.id },
+          h("button", { type: "button", class: "gdel", title: "Delete this step", "aria-label": "Delete step " + t.id }, "\u00d7"),
           h("span", { class: "port in", title: "runs after" }),
           h("b", { text: t.id }), h("small", { text: kind(t) }),
           h("small", { class: "muted", text: [t.node || "local", t.profile || t.runner || ""].filter(Boolean).join(" - ") }),
@@ -2529,15 +2633,16 @@
         canvas.appendChild(n);
         maxX = Math.max(maxX, t.pos[0] + 400); maxY = Math.max(maxY, t.pos[1] + 260);
         n.addEventListener("pointerdown", function (e) {
+          if (e.target.classList.contains("gdel")) { e.stopPropagation(); e.preventDefault(); removeTask(t.id); return; }
           if (e.target.classList.contains("out")) return connect(e, t);
-          select(t.id); e.preventDefault();
+          select(t.id); e.preventDefault(); n.focus({ preventScroll: true });
           var sx = e.clientX, sy = e.clientY, ox = t.pos[0], oy = t.pos[1];
           try { n.setPointerCapture(e.pointerId); } catch (x) { /* a synthetic or ended pointer */ }
           function mv(ev) { t.pos = [Math.max(0, Math.round(ox + ev.clientX - sx)), Math.max(0, Math.round(oy + ev.clientY - sy))]; n.style.left = t.pos[0] + "px"; n.style.top = t.pos[1] + "px"; edges(); }
           function up() { n.removeEventListener("pointermove", mv); n.removeEventListener("pointerup", up); if (t.pos[0] !== ox || t.pos[1] !== oy) changed(); }
           n.addEventListener("pointermove", mv); n.addEventListener("pointerup", up);
         });
-        n.addEventListener("keydown", function (e) { if (e.key === "Delete" || e.key === "Backspace") { removeTask(t.id); e.preventDefault(); } });
+
       });
       canvas.style.width = maxX + "px"; canvas.style.height = maxY + "px";
       svg.setAttribute("width", maxX); svg.setAttribute("height", maxY);
@@ -2581,14 +2686,19 @@
       document.addEventListener("pointermove", mv); document.addEventListener("pointerup", up);
     }
     function removeTask(id) {
+      var gone = task(id); if (!gone) return;
+      var before = JSON.parse(JSON.stringify(wf.task));
       wf.task = wf.task.filter(function (t) { return t.id !== id; });
       wf.task.forEach(function (t) { t.needs = (t.needs || []).filter(function (n) { return n !== id; }); });
       sel = null; changed(); draw(); inspect();
+      toastAction("Deleted step " + id, "Undo", function () { wf.task = before; sel = id; changed(); draw(); inspect(); });
     }
     function select(id) { sel = id; selEdge = null; Array.prototype.forEach.call(canvas.querySelectorAll(".gnode"), function (n) { n.classList.toggle("sel", n.getAttribute("data-id") === id); }); edges(); inspect(); }
     document.addEventListener("keydown", function onKey(e) {
       if (!document.body.contains(canvas)) { document.removeEventListener("keydown", onKey); return; }
-      if (selEdge && (e.key === "Delete" || e.key === "Backspace") && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+      var typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+      if (sel && !selEdge && (e.key === "Delete" || e.key === "Backspace") && !typing) { removeTask(sel); e.preventDefault(); return; }
+      if (selEdge && (e.key === "Delete" || e.key === "Backspace") && !typing) {
         var t = task(selEdge[1]); if (t) t.needs = t.needs.filter(function (n) { return n !== selEdge[0]; });
         selEdge = null; changed(); draw(); inspect(); e.preventDefault();
       }
@@ -2611,7 +2721,15 @@
         var nm = h("input", { type: "text", value: wf.name, required: true }), ds = h("input", { type: "text", value: wf.description || "" });
         nm.addEventListener("input", function () { wf.name = nm.value.trim(); changed(); });
         ds.addEventListener("input", function () { wf.description = ds.value; changed(); });
+        var where = h("select", { "aria-label": "Saved in" },
+          h("option", { value: "config", text: "My indra.toml (only on this machine)" }),
+          ((c.repo && c.repo.repos) || []).map(function (r) { return h("option", { value: r.dir, text: r.dir + " (commit to share)" }); }));
+        where.value = loc.kind === "repo" ? loc.repo : "config";
+        where.addEventListener("change", function () { loc = where.value === "config" ? { kind: "config" } : { kind: "repo", repo: where.value, file: loc.kind === "repo" && loc.repo === where.value ? loc.file : null }; changed(); inspect(); });
+        var file = loc.kind === "repo" ? (loc.file || (((c.repo.repos || []).find(function (r) { return r.dir === loc.repo; }) || {}).folder + "/" + (wf.name || "workflow") + ".toml")) : c.path;
         inspector.appendChild(h("div", { class: "form" }, h("h3", { text: "Workflow" }), field("Name", nm, "Run it with `indra run <name>` or from the Workflows page."), field("Description", ds),
+          field("Saved in", where, "In a repository it is a file in .indra/workflows/: commit it, and everyone with that repository gets the workflow (workflows as code). Steps with no target run in that repository."),
+          h("p", { class: "muted small" }, "File: ", h("code", { text: file || "" })),
           h("p", { class: "muted small", text: wf.task.length + " steps. Select a step to edit it." })));
         return;
       }
@@ -2623,7 +2741,8 @@
         wf.task.forEach(function (x) { x.needs = (x.needs || []).map(function (n) { return n === t.id ? v : n; }); });
         t.id = v; sel = v; changed(); draw();
       });
-      f.appendChild(h("h3", { text: t.workflow ? "Sub-workflow step" : "Task" }));
+      f.appendChild(h("div", { class: "row inspect-head" }, h("h3", { text: t.workflow ? "Sub-workflow step" : t.skill ? "Skill step" : "Task" }),
+        h("button", { type: "button", class: "danger small", title: "Delete this step (or press Delete)", onclick: function () { removeTask(t.id); } }, "Delete step")));
       f.appendChild(field("Id", idIn));
       function sel_(k, options, blank, help) {
         var s = h("select", null, (blank != null ? [h("option", { value: "", text: blank })] : []).concat(options.map(function (o) { return h("option", { value: o, text: o }); })));
@@ -2638,36 +2757,53 @@
         return el;
       }
       if (t.workflow) {
-        f.appendChild(field("Runs workflow", sel_("workflow", (c.config.workflow || []).map(function (w) { return w.name; }).filter(function (n) { return n !== wf.name; }), null),
+        f.appendChild(field("Runs workflow", sel_("workflow", allWorkflows().map(function (w) { return w.name; }).filter(function (n) { return n !== wf.name; }), null),
           "Its tasks run as this one step: they start after this step's links, and what runs after this step waits for them all."));
       } else {
-        var comp = c.config.component || [], cc = t.component && comp.find(function (x) { return x.name === t.component; });
-        f.appendChild(field("Component", sel_("component", comp.map(function (x) { return x.name; }), "None"), "Fields left empty come from the component."));
+        var comp = allComponents(), cc = t.component && comp.find(function (x) { return x.name === t.component; });
+        if (t.skill) {
+          var names = skills.map(function (x) { return x.name; }); if (names.indexOf(t.skill) < 0) names.unshift(t.skill);
+          f.appendChild(field("Skill", sel_("skill", names, null), "Runs the skill as Claude Code's /" + t.skill + " command; the prompt below is what follows it."));
+        } else {
+          f.appendChild(field("Saved task", sel_("component", comp.map(function (x) { return x.name; }), "None"), "Start from a saved task: fields left empty here come from it."));
+        }
         f.appendChild(field("Node", sel_("node", cfgNodeNames(c), cc && cc.node ? "component: " + cc.node : "local")));
         f.appendChild(field("Profile", sel_("profile", cfgProfileNames(c), cc && cc.profile ? "component: " + cc.profile : "None")));
         f.appendChild(field("Runner", sel_("runner", cfgRunnerNames(c), cc && cc.runner ? "component: " + cc.runner : "claude (or the profile's)")));
         var mdl = text("model", false, "the profile's"); mdl.setAttribute("list", "models");
         f.appendChild(field("Model", mdl, "Over the profile's; with Ollama, a local model's name."));
         f.appendChild(field("Runs on", sel_("provider", ["anthropic", "ollama"], "the profile's choice")));
-        f.appendChild(field("Target", text("target", false, cc && cc.target ? cc.target : "a directory on that node")));
-        f.appendChild(field("Prompt", text("prompt", true, cc && cc.prompt ? cc.prompt : "What should the agent do? {target} and {node} are filled in.")));
+        f.appendChild(field("Target", text("target", false, cc && cc.target ? cc.target : loc.kind === "repo" ? "this repository" : "a directory on that node"),
+          loc.kind === "repo" ? "Relative paths are inside the repository." : null));
+        f.appendChild(field(t.skill ? "Arguments" : "Prompt", text("prompt", true, t.skill ? "{target}" : cc && cc.prompt ? cc.prompt : "What should the agent do? {target} and {node} are filled in."),
+          t.skill ? "Default {target}: the directory it runs in." : null));
         f.appendChild(field("Retries", text("retries", false, cc && cc.retries ? String(cc.retries) : "0")));
       }
       f.appendChild(h("p", { class: "muted small", text: (t.needs || []).length ? "Runs after: " + t.needs.join(", ") : "Runs first (nothing before it)." }));
       f.appendChild(h("div", { class: "row" },
-        !t.workflow && canEdit() ? h("button", { type: "button", onclick: function () {
-          var n = window.prompt("Save this task as a reusable component named:", t.id); if (!n) return;
-          var comp = { name: n.trim() }; ["prompt", "profile", "runner", "node", "target"].forEach(function (k) { if (t[k]) comp[k] = t[k]; }); if (t.retries) comp.retries = t.retries;
-          addToSection("component", comp).then(function (r) { c = r; toast("Saved component " + comp.name); renderPalette(); }).catch(function (e) { toast(e.message, true); });
-        } }, "Save as component") : null,
-        h("button", { type: "button", class: "danger", onclick: function () { removeTask(t.id); } }, "Remove step")));
+        !t.workflow && canEdit() ? h("button", { type: "button", title: "Keep this task's settings to drag into other workflows", onclick: function () {
+          var n = window.prompt("Save this task for reuse in other workflows, named:", t.id); if (!n) return;
+          var comp = { name: n.trim() }; ["prompt", "profile", "runner", "node", "target", "skill"].forEach(function (k) { if (t[k]) comp[k] = t[k]; }); if (t.retries) comp.retries = t.retries;
+          if (loc.kind === "repo") {
+            // Kept in the workflow's own file when it is saved.
+            pendingComps = pendingComps.filter(function (x) { return x.name !== comp.name; }).concat([comp]);
+            c.repo.files = repoFiles().concat([{ file: "", components: [comp], workflows: [] }]);
+            t.component = comp.name; changed(); renderPalette(); toast("Saved task " + comp.name + " is kept with this workflow when you save it"); return;
+          }
+          addToSection("component", comp).then(function (r) { c = r; toast("Saved task " + comp.name); renderPalette(); }).catch(function (e) { toast(e.message, true); });
+        } }, "Save for reuse") : null));
       inspector.appendChild(f);
     }
 
+    var pendingComps = [];
     function add(spec, x, y) {
-      var t = { id: uniqueId(spec.workflow || spec.component || "task"), pos: [Math.round(x), Math.round(y)] };
+      // Not on top of another step: move down (then right) to a free spot.
+      function taken(px, py) { return wf.task.some(function (o) { return o.pos && Math.abs(o.pos[0] - px) < 200 && Math.abs(o.pos[1] - py) < 110; }); }
+      for (var tries = 0; taken(x, y) && tries < 60; tries++) { y += 130; if (tries % 5 === 4) { y -= 650; x += 280; } }
+      var t = { id: uniqueId((spec.workflow || spec.component || spec.skill || "task").replace(/[^A-Za-z0-9_-]/g, "-")), pos: [Math.round(x), Math.round(y)] };
       if (spec.workflow) t.workflow = spec.workflow;
       if (spec.component) t.component = spec.component;
+      if (spec.skill) t.skill = spec.skill;
       wf.task.push(t); changed(); draw(); select(t.id);
     }
     function renderPalette() {
@@ -2681,11 +2817,27 @@
       }
       palette.appendChild(h("h3", { text: "Add" }));
       palette.appendChild(item("Task", "an agent with a prompt", {}));
-      var comps = c.config.component || [];
-      palette.appendChild(h("h3", { text: "Components" }));
-      if (!comps.length) palette.appendChild(h("p", { class: "muted small", text: "None yet. Select a task and press Save as component to reuse it." }));
-      comps.forEach(function (x) { palette.appendChild(item(x.name, x.description || x.prompt, { component: x.name })); });
-      var others = (c.config.workflow || []).filter(function (w) { return w.name !== original; });
+      palette.appendChild(h("h3", { text: "Skills", title: "Run one of the harness's skills as a step" }));
+      if (!skills.length) palette.appendChild(h("p", { class: "muted small", text: "This harness has no skills." }));
+      var sf = null;
+      if (skills.length > 6) {
+        sf = h("input", { type: "search", placeholder: "Filter skills", "aria-label": "Filter skills" });
+        palette.appendChild(sf);
+      }
+      var skillBox = h("div", { class: "pgroup" }); palette.appendChild(skillBox);
+      function drawSkills() {
+        skillBox.textContent = "";
+        var q = sf ? sf.value.trim().toLowerCase() : "";
+        skills.filter(function (x) { return !q || (x.name + " " + x.description).toLowerCase().indexOf(q) >= 0; }).slice(0, 40)
+          .forEach(function (x) { skillBox.appendChild(item(x.name, x.description, { skill: x.name })); });
+      }
+      if (sf) sf.addEventListener("input", drawSkills);
+      drawSkills();
+      var comps = allComponents();
+      palette.appendChild(h("h3", { text: "Saved tasks", title: "A task saved for reuse: drag it into any workflow; change it once and every workflow using it changes" }));
+      if (!comps.length) palette.appendChild(h("p", { class: "muted small", text: "A task saved for reuse. Select a task and press Save for reuse." }));
+      comps.forEach(function (x) { palette.appendChild(item(x.name, x.description || (x.skill ? "skill " + x.skill : x.prompt), { component: x.name })); });
+      var others = allWorkflows().filter(function (w) { return w.name !== original; });
       palette.appendChild(h("h3", { text: "Workflows" }));
       if (!others.length) palette.appendChild(h("p", { class: "muted small", text: "Other workflows appear here, to run as one step." }));
       others.forEach(function (w) { palette.appendChild(item(w.name, (w.task || []).length + " steps", { workflow: w.name })); });
@@ -2703,12 +2855,35 @@
       var clean = JSON.parse(JSON.stringify(wf));
       if (!clean.description) delete clean.description;
       clean.task.forEach(function (t) { if (!t.needs || !t.needs.length) delete t.needs; if (!t.retries) delete t.retries; });
-      var list = (c.config.workflow || []).filter(function (w) { return w.name !== original && w.name !== clean.name; });
-      var at = (c.config.workflow || []).findIndex(function (w) { return w.name === original; });
-      if (at >= 0 && at <= list.length) list.splice(at, 0, clean); else list.push(clean);
       save.disabled = true;
-      api("/api/config", { method: "PUT", body: { version: c.version, section: "workflow", value: list } }).then(function (r) {
-        c = r; original = clean.name; dirty = false; status.textContent = "Saved"; toast("Saved workflow " + clean.name + ". Applied now.");
+      // Out of the config file, when it is in there under its old name.
+      function dropFromConfig(cc) {
+        if (!(cc.config.workflow || []).some(function (w) { return w.name === original; })) return Promise.resolve(cc);
+        return api("/api/config", { method: "PUT", body: { version: cc.version, section: "workflow", value: (cc.config.workflow || []).filter(function (w) { return w.name !== original; }) } });
+      }
+      var done;
+      if (loc.kind === "repo") {
+        // Saved tasks it uses that live only in this machine's config go into the file too.
+        var mine = (c.config.component || []).filter(function (x) { return clean.task.some(function (t) { return t.component === x.name; }) &&
+          !repoFiles().some(function (f) { return f.file && (f.components || []).some(function (y) { return y.name === x.name; }); }); });
+        done = api("/api/workflow-files", { method: "PUT", body: { repo: loc.repo, workflow: clean, original_file: was && was.kind === "repo" ? was.file : null,
+          original_name: original, components: mine.concat(pendingComps) } }).then(function (r) {
+          loc.file = r.file; if (r.problem) toast("Saved, but not usable here yet: " + r.problem, true);
+          return was && was.kind === "config" ? dropFromConfig(r.config) : r.config;
+        });
+      } else {
+        var list = (c.config.workflow || []).filter(function (w) { return w.name !== original && w.name !== clean.name; });
+        var at = (c.config.workflow || []).findIndex(function (w) { return w.name === original; });
+        if (at >= 0 && at <= list.length) list.splice(at, 0, clean); else list.push(clean);
+        done = api("/api/config", { method: "PUT", body: { version: c.version, section: "workflow", value: list } }).then(function (r) {
+          // Moved here from a repository: take it out of that file.
+          if (was && was.kind === "repo" && was.file) return api("/api/workflow-files/delete", { method: "POST", body: { file: was.file, name: original } });
+          return r;
+        });
+      }
+      done.then(function (r) {
+        c = r; original = clean.name; was = JSON.parse(JSON.stringify(loc)); pendingComps = []; dirty = false; status.textContent = "Saved";
+        toast("Saved workflow " + clean.name + (loc.kind === "repo" ? " to " + loc.file + ". Commit it to share it." : ". Applied now."));
         var title = m.querySelector(".head h1"); if (title) title.textContent = "Edit workflow " + clean.name; renderPalette();
         refreshOverview(); if (location.hash !== "#/wfedit/" + encodeURIComponent(clean.name)) history.replaceState(null, "", "#/wfedit/" + encodeURIComponent(clean.name));
       }).catch(function (e) { toast(e.message, true); status.textContent = "Not saved: " + e.message; }).then(function () { save.disabled = !canEdit(); });
@@ -2719,9 +2894,13 @@
       c = x;
       if (c.error) { inspector.textContent = "indra.toml has an error; fix it in Settings > File first."; return; }
       var found = original && (c.config.workflow || []).find(function (w) { return w.name === original; });
+      if (found) loc = { kind: "config" };
+      else if (original) repoFiles().forEach(function (f) { var w = (f.workflows || []).find(function (x) { return x.name === original; }); if (w && !found) { found = w; loc = { kind: "repo", repo: f.repo, file: f.file }; } });
+      was = found ? JSON.parse(JSON.stringify(loc)) : null;
       wf = found ? JSON.parse(JSON.stringify(found)) : { name: original || "new-workflow", task: [] };
       wf.task = wf.task || [];
       tidy(false); renderPalette(); draw(); inspect();
+      api("/api/defs" + hq()).then(function (d) { skills = d.filter(function (x) { return x.kind === "skill"; }); renderPalette(); if (sel) inspect(); }).catch(function () { /* no skills */ });
       save.disabled = !c.editable; status.textContent = c.editable ? "" : "Read-only: " + c.locked;
     }).catch(function (e) { inspector.textContent = e.status === 404 ? "This console cannot edit indra.toml." : e.message; });
   }
@@ -2730,7 +2909,7 @@
   // Each section of the config file has a schema; forms are built from it, and
   // a save replaces that one section on the server, which keeps the rest of
   // the file (comments included), checks the result, and applies it at once.
-  var TABS = [["general", "General"], ["profiles", "Profiles"], ["runners", "Runners"], ["nodes", "Nodes"], ["workflows", "Workflows"], ["components", "Components"],
+  var TABS = [["general", "General"], ["profiles", "Profiles"], ["runners", "Runners"], ["nodes", "Nodes"], ["workflows", "Workflows"], ["components", "Saved tasks"],
     ["presets", "Presets"], ["teams", "Teams"], ["marketplaces", "Marketplaces"], ["harnesses", "Harnesses"], ["connectors", "Connectors"], ["secrets", "Secrets"], ["users", "Users"], ["file", "File"]];
 
   function opts(list, blank) { return (blank ? [["", blank]] : []).concat(list.map(function (x) { return [x, x]; })); }
@@ -2741,7 +2920,10 @@
     var n = {}; (c.config.harness || []).concat(c.builtin.harnesses).forEach(function (x) { n[x.name] = 1; }); return Object.keys(n);
   }
   function cfgNodeNames(c) { return ["local"].concat((c.config.node || []).map(function (n) { return n.name; })); }
-  function cfgProfileNames(c) { return (c.config.profile || []).map(function (p) { return p.name; }); }
+  // Profiles from indra.toml, then the built-in ones it does not replace.
+  function cfgProfileNames(c) {
+    var n = {}; (c.config.profile || []).concat(c.config.builtins === false ? [] : (c.builtin.profiles || [])).forEach(function (p) { n[p.name] = 1; }); return Object.keys(n);
+  }
   // Starting points for "Add profile".
   var PROFILE_TEMPLATES = [
     { label: "Planner (Opus, read-only)", v: { name: "planner", description: "Reads and plans; changes nothing", runner: "claude", model: "opus", permission_mode: "dontAsk", effort: "high",
@@ -2764,10 +2946,11 @@
   ];
 
   var SCHEMA = {
-    component: { tab: "components", noun: "component", fields: function (c) { return [
-      { k: "name", label: "Name", req: true, help: "Drag it into a workflow from the editor's palette; a task's own fields override it." },
+    component: { tab: "components", noun: "saved task", fields: function (c) { return [
+      { k: "name", label: "Name", req: true, help: "A task saved for reuse: drag it into any workflow from the editor's palette. A task's own fields override it, and a change here reaches every workflow that uses it." },
       { k: "description", label: "Description" },
-      { k: "prompt", label: "Prompt", type: "textarea", help: "{target} and {node} are filled in." },
+      { k: "prompt", label: "Prompt", type: "textarea", help: "{target} and {node} are filled in. With a skill: its arguments (default {target})." },
+      { k: "skill", label: "Skill", placeholder: "e.g. sh-security-review", help: "Run this skill instead of a free prompt (optional)." },
       { k: "profile", label: "Profile", type: "select", options: opts(cfgProfileNames(c), "None") },
       { k: "runner", label: "Runner", type: "select", options: opts(cfgRunnerNames(c), "Default") },
       { k: "node", label: "Node", type: "select", options: opts(cfgNodeNames(c), "Default (local)") },
@@ -3017,21 +3200,25 @@
         body.appendChild(h("div", { class: "note bad" }, "The file has an error, so the forms are off until it is fixed in the ", h("a", { href: "#/settings/file", text: "File" }), " tab: " + c.error));
         return;
       }
-      ({ general: general, profiles: function () { list("profile"); }, runners: function () { list("runner", c.builtin.runners); }, nodes: function () { list("node"); },
+      ({ general: general, profiles: function () { list("profile", c.config.builtins === false ? [] : c.builtin.profiles); }, runners: function () { list("runner", c.builtin.runners); }, nodes: function () { list("node"); },
         workflows: function () { list("workflow"); }, presets: function () { list("preset", c.builtin.presets); },
-        harnesses: function () { list("harness", c.builtin.harnesses); }, connectors: function () { list("connector"); }, components: function () { list("component"); }, teams: function () { list("team"); }, marketplaces: function () { list("marketplace"); }, secrets: secrets, users: usersTab, file: file })[tab]();
+        harnesses: function () { list("harness", c.builtin.harnesses); }, connectors: function () { list("connector"); }, components: function () { list("component"); }, teams: function () { list("team", c.config.builtins === false ? [] : c.builtin.teams); }, marketplaces: function () { list("marketplace"); }, secrets: secrets, users: usersTab, file: file })[tab]();
     }
 
     function general() {
       var cf = c.config, fields = [
-        { k: "builtins", label: "Show the built-in profiles (the indra plugin, and Claude Code projects)", type: "bool" },
+        { k: "builtins", label: "Use the built-ins: harness profiles (the indra plugin, Claude Code projects), agent profiles (planner, worker, builder, reviewer) and the plan-and-build team", type: "bool" },
         { k: "max_parallel", label: "Agents at once on this machine", type: "number", placeholder: "4", help: "Workflows and fan-outs wait for room; a manual Launch always starts." },
         { k: "bind", label: "Listen on", placeholder: "127.0.0.1:7878", help: "Used the next time indra serve starts (now: " + c.startup.bind + "). Keep it on loopback." },
         { k: "read_only", label: "Start read-only (no launching, no editing)", type: "bool", help: "Used the next time indra serve starts." },
         { k: "webrtc", label: "Let nodes that dial in use a direct WebRTC channel (else everything goes over their WebSocket)", type: "bool" },
-        { k: "ice_servers", label: "STUN servers for WebRTC", type: "list", placeholder: "stun:stun.l.google.com:19302", help: "One URL per line. TURN servers with a username and credential go in indra.toml as [[server.ice]] (see the nodes guide)." }];
+        { k: "ice_servers", label: "STUN servers for WebRTC", type: "list", placeholder: "stun:stun.l.google.com:19302", help: "One URL per line. TURN servers with a username and credential go in indra.toml as [[server.ice]] (see the nodes guide)." },
+        { k: "shell", label: "Terminal: shell", placeholder: "your login shell ($SHELL)", help: "What a browser terminal starts, e.g. /bin/zsh, fish or pwsh. Installed: " + ((S.ov && S.ov.shells) || []).join(", ") + "." },
+        { k: "shell_args", label: "Terminal: shell arguments", type: "list", placeholder: "-l", help: "One per line, e.g. -l for a login shell." },
+        { k: "shells", label: "Terminal: more shells to offer", type: "list", placeholder: "/opt/homebrew/bin/fish", help: "Besides /etc/shells; the terminal's New form lists them." }];
+      var term = cf.terminal || {};
       var vals = { builtins: cf.builtins !== false, max_parallel: cf.local.max_parallel, bind: cf.server.bind, read_only: !!cf.server.read_only,
-        webrtc: cf.server.webrtc !== false, ice_servers: cf.server.ice_servers };
+        webrtc: cf.server.webrtc !== false, ice_servers: cf.server.ice_servers, shell: term.shell, shell_args: term.args, shells: term.shells };
       var form = itemForm(fields, vals, "General", function (o) {
         // One section at a time; each save returns the version the next one needs.
         return saveSection("builtins", o.builtins ? null : false, "Saved")
@@ -3042,6 +3229,10 @@
             if (o.bind) sv.bind = o.bind; if (o.read_only) sv.read_only = true; if (!o.webrtc) sv.webrtc = false;
             if (o.ice_servers && o.ice_servers.length) sv.ice_servers = o.ice_servers;
             return saveSection("server", sv);
+          })
+          .then(function () {
+            var t = {}; if (o.shell) t.shell = o.shell; if (o.shell_args && o.shell_args.length) t.args = o.shell_args; if (o.shells && o.shells.length) t.shells = o.shells;
+            return saveSection("terminal", Object.keys(t).length ? t : null);
           });
       }, function () { render(); });
       if (!c.editable) Array.prototype.forEach.call(form.querySelectorAll("input,select,textarea,button"), function (x) { x.disabled = true; });
@@ -3061,7 +3252,9 @@
         }, render));
         var first = body.querySelector("input,textarea,select"); if (first) first.focus();
       }
-      var add = h("button", { class: "primary", type: "button", disabled: !c.editable, onclick: function () { edit(null, {}, "New " + d.noun); } }, "Add " + d.noun);
+      var add = h("button", { class: "primary", type: "button", disabled: !c.editable, onclick: function () {
+        // A new team starts from the built-in profiles, so its selects are never blank.
+        edit(null, section === "team" ? { planner: "planner", worker: "worker" } : {}, "New " + d.noun); } }, "Add " + d.noun);
       var exportBtn = h("button", { type: "button", disabled: !items.length, onclick: function () { jsonFile(section + "s.json", items); } }, "Export");
       var importBtn = h("button", { type: "button", disabled: !c.editable, onclick: function () {
         pickFiles({ accept: ".json,application/json" }).then(function (fs) {
@@ -3080,8 +3273,8 @@
       body.appendChild(h("div", { class: "row cfgbar" }, add, templates.map(function (t) {
         return h("button", { type: "button", disabled: !c.editable, onclick: function () { edit(null, JSON.parse(JSON.stringify(t.v)), "New " + d.noun + ": " + t.label); } }, "+ " + t.label);
       }), exportBtn, importBtn));
-      if (section === "team") body.appendChild(h("p", { class: "muted", text: "A team plans with one profile and builds with cheaper ones: Launch > Plan and delegate. The templates name the planner, builder and local profiles; add those under Profiles first (they have templates too). Any runner can fill any role, for example a Codex planner with a local Ollama builder." }));
-      if (section === "profile") body.appendChild(h("p", { class: "muted", text: "A profile is how an agent runs: plan with a strong model, do the work with the one you choose, or try it on a local model. Launch, presets, workflow tasks and fan-outs can pick one; model and mode can still change while the agent runs." }));
+      if (section === "team") body.appendChild(h("p", { class: "muted", text: "A team plans with one profile and builds with cheaper ones: Launch > Plan and delegate. plan-and-build is built in and uses the built-in profiles, so it works with no setup. Any runner can fill any role, for example a Codex planner with a local Ollama builder." }));
+      if (section === "profile") body.appendChild(h("p", { class: "muted", text: "A profile is how an agent runs: plan with a strong model, do the work with the one you choose, or try it on a local model. planner, worker, builder and reviewer are built in (Claude Code with Opus, Sonnet and Haiku); Customize one to change it. Launch, presets, workflow tasks and fan-outs can pick one; model and mode can still change while the agent runs." }));
       body.appendChild(modelList() || h("span"));
       var grid = h("div", { class: "grid" });
       items.forEach(function (it, i) {

@@ -444,6 +444,7 @@ pub fn fan_out(runner: &str, prompt: &str, targets: &[(String, String)]) -> Work
                 provider: None,
                 component: None,
                 workflow: None,
+                skill: None,
                 pos: None,
             }
         })
@@ -451,6 +452,7 @@ pub fn fan_out(runner: &str, prompt: &str, targets: &[(String, String)]) -> Work
     WorkflowCfg {
         inputs: vec![],
         builtin: false,
+        source: None,
         name: "fan-out".into(),
         description: "Ad-hoc fan-out".into(),
         harness: None,
@@ -477,6 +479,7 @@ mod tests {
             provider: None,
             component: None,
             workflow: None,
+            skill: None,
             pos: None,
         }
     }
@@ -485,6 +488,7 @@ mod tests {
         WorkflowCfg {
             inputs: vec![],
             builtin: false,
+            source: None,
             name: "w".into(),
             description: String::new(),
             harness: None,

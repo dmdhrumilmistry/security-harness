@@ -8,7 +8,7 @@
 // BroadcastChannel), instead of another window.
 (function () {
   "use strict";
-  var KEYS = ["what", "h", "target", "proc", "profile"];
+  var KEYS = ["what", "h", "target", "proc", "profile", "shell"];
 
   function $(id) { return document.getElementById(id); }
   function h(tag, attrs, kids) {
@@ -217,13 +217,19 @@
     var targets = hs ? ((hs.targets && hs.targets.length) ? hs.targets : [hs.root]) : [];
     targets.forEach(function (tg, i) { ts.appendChild(h("option", { value: String(i), text: tg })); });
     ts.dataset.h = hs ? hs.name : "";
+    var sh = $("nshell"); sh.textContent = "";
+    (ov.shells || []).forEach(function (p, i) { sh.appendChild(h("option", { value: i ? p : "", text: p.split(/[\\/]/).pop() + (i ? "" : " (default)") })); });
+    $("nshellbox").hidden = $("nwhat").value !== "shell" || (ov.shells || []).length < 2;
     var ps = $("nprofile"); ps.textContent = "";
     ps.appendChild(h("option", { value: "", text: "no profile" }));
     (ov.profiles || []).filter(function (p) { return !p.runner || p.runner === "claude"; }).forEach(function (p) {
       ps.appendChild(h("option", { value: p.name, text: p.name + (p.provider === "ollama" ? " (Ollama: " + (p.model || "?") + ")" : "") }));
     });
   }
-  $("nwhat").addEventListener("change", function () { $("nprofilebox").hidden = $("nwhat").value !== "claude"; });
+  $("nwhat").addEventListener("change", function () {
+    $("nprofilebox").hidden = $("nwhat").value !== "claude";
+    $("nshellbox").hidden = $("nwhat").value !== "shell" || !ov || (ov.shells || []).length < 2;
+  });
   $("new").addEventListener("click", function () { showNew($("newform").hidden); });
   $("ncancel").addEventListener("click", function () { showNew(false); });
   $("none-new").addEventListener("click", function () { showNew(true); });
@@ -231,6 +237,7 @@
     e.preventDefault();
     var src = { what: $("nwhat").value, h: $("ntarget").dataset.h, target: $("ntarget").value };
     if (src.what === "claude" && $("nprofile").value) src.profile = $("nprofile").value;
+    if (src.what === "shell" && $("nshell").value) src.shell = $("nshell").value;
     showNew(false);
     openTab(src);
   });

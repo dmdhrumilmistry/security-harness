@@ -623,6 +623,12 @@ async fn overview(State(app): State<Arc<App>>, req: Request) -> Json<Value> {
         "user": me.user, "role": me.role.as_str(), "users": app.users.any(),
         "is_admin": me.role == Role::Admin,
         "shell": app.shell_on(),
+        // The shells a terminal can start (the first is the default).
+        "shells": if app.shell_on() && me.role == Role::Admin {
+            json!(crate::deck::term::shells(&s.terminal).iter().map(|p| p.display().to_string()).collect::<Vec<_>>())
+        } else {
+            json!([])
+        },
         "config": s.config_path.as_ref().map(|p| p.display().to_string()),
         "data_dir": s.data_dir.display().to_string(),
         "harnesses": s.harnesses.iter().map(harness_json).collect::<Vec<_>>(),
@@ -1513,7 +1519,49 @@ async fn node_run_fetch(
 
 // ---- workflows -------------------------------------------------------------------
 
+/// Workflow files in repositories change under a running console (a `git
+/// pull`): what was seen last, as names, sizes and times.
+fn repo_fingerprint(s: &Settings) -> String {
+    let mut out = String::new();
+    for d in &s.repo_dirs {
+        for f in config::repo_workflow_files(d) {
+            let m = std::fs::metadata(&f).ok();
+            let t = m
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            out.push_str(&format!(
+                "{}|{}|{}\n",
+                f.display(),
+                m.map(|m| m.len()).unwrap_or(0),
+                t
+            ));
+        }
+    }
+    out
+}
+
+/// Load the settings again when a repository's workflow files changed.
+fn refresh_repo_workflows(app: &App) {
+    static SEEN: Mutex<Option<String>> = Mutex::new(None);
+    let Some(c) = &app.config else {
+        return;
+    };
+    let fp = repo_fingerprint(&app.settings());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.as_deref() == Some(fp.as_str()) {
+        return;
+    }
+    *seen = Some(fp);
+    drop(seen);
+    let _one = c.saving.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = reload_settings(app, c);
+}
+
 async fn workflows_list(State(app): State<Arc<App>>) -> Json<Value> {
+    refresh_repo_workflows(&app);
     let defs: Vec<Value> = app
         .settings()
         .workflows
@@ -1521,10 +1569,12 @@ async fn workflows_list(State(app): State<Arc<App>>) -> Json<Value> {
         .map(|w| {
             let mut v = json!(w);
             v["builtin"] = json!(w.builtin);
+            v["source"] = json!(w.source.as_ref().map(|p| p.display().to_string()));
             v
         })
         .collect();
-    Json(json!({ "defs": defs, "runs": app.engine.list() }))
+    let s = app.settings();
+    Json(json!({ "defs": defs, "runs": app.engine.list(), "errors": s.workflow_errors }))
 }
 
 #[derive(Deserialize)]
@@ -1539,6 +1589,7 @@ async fn workflow_run(
     State(app): State<Arc<App>>,
     Json(r): Json<RunWfReq>,
 ) -> ApiResult<Json<Value>> {
+    refresh_repo_workflows(&app);
     if app.settings().read_only {
         return Err(forbidden("indra is running read-only"));
     }
@@ -1769,8 +1820,72 @@ async fn board_get(State(app): State<Arc<App>>) -> Json<Value> {
     Json(json!({
         "columns": crate::deck::board::COLUMNS,
         "items": app.board.items(),
+        "boards": app.board.boards(),
         "connectors": crate::deck::board::connectors_view(&s),
     }))
+}
+
+#[derive(Deserialize)]
+struct NewBoard {
+    name: String,
+    #[serde(default)]
+    description: String,
+}
+
+async fn boards_create(
+    State(app): State<Arc<App>>,
+    Json(r): Json<NewBoard>,
+) -> ApiResult<Json<Value>> {
+    board_writable(&app)?;
+    let id = app.board.add_board(&r.name, &r.description).map_err(bad)?;
+    Ok(Json(json!({ "id": id, "boards": app.board.boards() })))
+}
+
+#[derive(Deserialize)]
+struct BoardEdit {
+    name: Option<String>,
+    description: Option<String>,
+    connectors: Option<Vec<String>>,
+}
+
+async fn boards_update(
+    State(app): State<Arc<App>>,
+    UrlPath(id): UrlPath<String>,
+    Json(r): Json<BoardEdit>,
+) -> ApiResult<Json<Value>> {
+    board_writable(&app)?;
+    if let Some(cs) = &r.connectors {
+        let s = app.settings();
+        for c in cs {
+            if s.connector(c).is_none() {
+                return Err(bad(format!("no connector named '{}'", c)));
+            }
+        }
+    }
+    let b = app
+        .board
+        .update_board(&id, r.name, r.description, r.connectors)
+        .map_err(bad)?;
+    Ok(Json(json!(b)))
+}
+
+#[derive(Deserialize)]
+struct BoardDel {
+    /// Move its items to this board; without one they are deleted.
+    move_to: Option<String>,
+}
+
+async fn boards_delete(
+    State(app): State<Arc<App>>,
+    UrlPath(id): UrlPath<String>,
+    Query(q): Query<BoardDel>,
+) -> ApiResult<Json<Value>> {
+    board_writable(&app)?;
+    let n = app
+        .board
+        .delete_board(&id, q.move_to.as_deref().filter(|x| !x.is_empty()))
+        .map_err(bad)?;
+    Ok(Json(json!({ "items": n, "boards": app.board.boards() })))
 }
 
 #[derive(Deserialize)]
@@ -1984,6 +2099,201 @@ fn harness_cfg(h: &Harness) -> config::HarnessCfg {
     }
 }
 
+/// The repositories workflows can be kept in, and the workflow files found
+/// there (as written, for the editor), with any that could not be used.
+fn repo_files_payload(s: &Settings) -> Value {
+    let mut files = Vec::new();
+    for d in &s.repo_dirs {
+        for f in config::repo_workflow_files(d) {
+            let (wfs, comps, error) = match config::read_repo_file(&f) {
+                Ok(r) => (json!(r.workflow), json!(r.component), Value::Null),
+                Err(e) => (json!([]), json!([]), json!(e)),
+            };
+            files.push(json!({
+                "repo": d.display().to_string(), "file": f.display().to_string(),
+                "workflows": wfs, "components": comps, "error": error,
+            }));
+        }
+    }
+    json!({
+        "repos": s.repo_dirs.iter().map(|d| json!({
+            "dir": d.display().to_string(),
+            "folder": config::repo_workflow_dir(d).display().to_string(),
+        })).collect::<Vec<_>>(),
+        "files": files,
+        "errors": s.workflow_errors,
+    })
+}
+
+/// A workflow file in a known repository's `.indra/workflows/`, or an error.
+fn repo_file_in(s: &Settings, file: &str) -> ApiResult<std::path::PathBuf> {
+    let f = std::path::PathBuf::from(file);
+    let name_ok = f
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".toml") && !n.starts_with('.'));
+    let dir_ok = s.repo_dirs.iter().any(|d| {
+        let w = config::repo_workflow_dir(d);
+        f.parent().is_some_and(|p| {
+            p == w || std::fs::canonicalize(p).ok() == std::fs::canonicalize(&w).ok() && p.exists()
+        })
+    });
+    if !name_ok || !dir_ok {
+        return Err(bad(
+            "not a workflow file of a repository this console knows",
+        ));
+    }
+    Ok(f)
+}
+
+fn write_repo_file(f: &std::path::Path, rf: &config::RepoFile) -> ApiResult<()> {
+    if rf.workflow.is_empty() && rf.component.is_empty() {
+        return match std::fs::remove_file(f) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(internal(e.to_string())),
+        };
+    }
+    let body = toml::to_string(rf).map_err(|e| internal(e.to_string()))?;
+    let names: Vec<&str> = rf.workflow.iter().map(|w| w.name.as_str()).collect();
+    let text = format!(
+        "# indra workflow{}: {}. Commit this file to share it: everyone whose\n\
+         # indra console or `indra run` has this repository as a target gets it.\n\
+         # Edit it in the console's workflow editor or by hand.\n\n{}",
+        if names.len() == 1 { "" } else { "s" },
+        names.join(", "),
+        body
+    );
+    if let Some(d) = f.parent() {
+        std::fs::create_dir_all(d).map_err(|e| internal(e.to_string()))?;
+    }
+    confedit::write_atomic(f, &text).map_err(internal)
+}
+
+/// Load the settings again (a repository file changed).
+fn reload_settings(app: &App, c: &ConfigAccess) -> ApiResult<()> {
+    let (current, _) = confedit::read(&c.path).map_err(internal)?;
+    let settings = check_config(app, c, &current)?;
+    app.settings.set(settings);
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct RepoWfSave {
+    /// The repository (one of the known ones).
+    repo: String,
+    workflow: config::WorkflowCfg,
+    /// Where it was before: a repository file, and its name there.
+    #[serde(default)]
+    original_file: Option<String>,
+    #[serde(default)]
+    original_name: Option<String>,
+    /// Saved tasks to keep in the same file, so the file stands on its own.
+    #[serde(default)]
+    components: Vec<config::ComponentCfg>,
+}
+
+/// Save a workflow into a repository, as `.indra/workflows/<name>.toml` (or
+/// back into the file it came from), so it can be committed and shared.
+async fn repo_wf_save(
+    State(app): State<Arc<App>>,
+    Json(r): Json<RepoWfSave>,
+) -> ApiResult<Json<Value>> {
+    let c = config_access(&app)?;
+    if let Some(why) = &c.locked {
+        return Err(forbidden(why.clone()));
+    }
+    let _one = c.saving.lock().unwrap_or_else(|e| e.into_inner());
+    let s = app.settings();
+    let repo = s
+        .repo_dirs
+        .iter()
+        .find(|d| d.display().to_string() == r.repo)
+        .ok_or_else(|| bad("not a repository this console knows (a harness root or target)"))?
+        .clone();
+    let w = r.workflow;
+    nodes::validate_name(&w.name).map_err(|e| bad(format!("workflow name: {}", e)))?;
+    if w.tasks.is_empty() {
+        return Err(bad("add at least one step"));
+    }
+    let old_name = r.original_name.clone().unwrap_or_else(|| w.name.clone());
+    let original = match &r.original_file {
+        Some(f) => Some(repo_file_in(&s, f)?),
+        None => None,
+    };
+    let dir = config::repo_workflow_dir(&repo);
+    // Back into its own file when it stays in that repository.
+    let target = match &original {
+        Some(f) if f.parent() == Some(dir.as_path()) => f.clone(),
+        _ => dir.join(format!("{}.toml", w.name)),
+    };
+    let mut rf = if target.exists() {
+        config::read_repo_file(&target).map_err(|e| bad(format!("{}: {}", target.display(), e)))?
+    } else {
+        config::RepoFile::default()
+    };
+    let same_file = original.as_ref() == Some(&target);
+    if same_file {
+        rf.workflow.retain(|x| x.name != old_name);
+    }
+    if rf.workflow.iter().any(|x| x.name == w.name) {
+        return Err(bad(format!(
+            "{} already has a workflow named '{}'",
+            target.display(),
+            w.name
+        )));
+    }
+    rf.workflow.push(w.clone());
+    for comp in r.components {
+        nodes::validate_name(&comp.name).map_err(|e| bad(format!("saved task name: {}", e)))?;
+        rf.component.retain(|x| x.name != comp.name);
+        rf.component.push(comp);
+    }
+    write_repo_file(&target, &rf)?;
+    // Moved out of another file: take it out of there.
+    if let Some(f) = original.filter(|f| f != &target) {
+        if let Ok(mut old) = config::read_repo_file(&f) {
+            old.workflow.retain(|x| x.name != old_name);
+            write_repo_file(&f, &old)?;
+        }
+    }
+    reload_settings(&app, c)?;
+    let now = app.settings();
+    let problem = now
+        .workflow_errors
+        .iter()
+        .find(|e| e.starts_with(&target.display().to_string()))
+        .cloned();
+    Ok(Json(json!({
+        "file": target.display().to_string(),
+        "problem": problem,
+        "config": config_payload(&app)?,
+    })))
+}
+
+#[derive(Deserialize)]
+struct RepoWfDelete {
+    file: String,
+    name: String,
+}
+
+async fn repo_wf_delete(
+    State(app): State<Arc<App>>,
+    Json(r): Json<RepoWfDelete>,
+) -> ApiResult<Json<Value>> {
+    let c = config_access(&app)?;
+    if let Some(why) = &c.locked {
+        return Err(forbidden(why.clone()));
+    }
+    let _one = c.saving.lock().unwrap_or_else(|e| e.into_inner());
+    let f = repo_file_in(&app.settings(), &r.file)?;
+    let mut rf = config::read_repo_file(&f).map_err(bad)?;
+    rf.workflow.retain(|x| x.name != r.name);
+    write_repo_file(&f, &rf)?;
+    reload_settings(&app, c)?;
+    Ok(Json(config_payload(&app)?))
+}
+
 fn config_payload(app: &App) -> ApiResult<Value> {
     let c = config_access(app)?;
     let (text, exists) = confedit::read(&c.path).map_err(internal)?;
@@ -2002,9 +2312,12 @@ fn config_payload(app: &App) -> ApiResult<Value> {
         "text": text,
         "config": parsed,
         "error": error,
+        "repo": repo_files_payload(&s),
         "builtin": {
             "runners": config::default_runners(),
             "presets": config::default_presets(),
+            "profiles": config::default_profiles(),
+            "teams": config::default_teams(),
             "harnesses": s.harnesses.iter().filter(|h| h.builtin).map(harness_cfg).collect::<Vec<_>>(),
         },
         "installed": s.runners.iter().map(|r| json!({
@@ -2032,6 +2345,7 @@ fn check_config(app: &App, c: &ConfigAccess, text: &str) -> ApiResult<Settings> 
 }
 
 async fn config_get(State(app): State<Arc<App>>) -> ApiResult<Json<Value>> {
+    refresh_repo_workflows(&app);
     Ok(Json(config_payload(&app)?))
 }
 
@@ -2286,6 +2600,8 @@ struct TermQ {
     proc: Option<u64>,
     /// For `claude`: a profile to start it with (an Ollama one included).
     profile: Option<String>,
+    /// For `shell`: which one (from the offered list); default: the configured one.
+    shell: Option<String>,
 }
 
 /// Claude Code's arguments, its environment, and where it runs (for the label).
@@ -2387,10 +2703,27 @@ fn term_spec(app: &App, q: &TermQ) -> ApiResult<crate::deck::term::Spec> {
     match q.what.as_str() {
         "shell" => {
             let cwd = dir()?;
+            let cfg = &app.settings().terminal;
+            let (default, default_args) = term::default_shell(cfg);
+            let (program, args, name) = match q.shell.as_deref().filter(|x| !x.is_empty()) {
+                None => (default, default_args, "shell".to_string()),
+                Some(want) => {
+                    let p = term::shells(cfg)
+                        .into_iter()
+                        .find(|p| p.display().to_string() == want)
+                        .ok_or_else(|| bad("that shell is not offered here (see Settings > General > Terminal)"))?;
+                    let args = if p == default { default_args } else { vec![] };
+                    let name = p
+                        .file_stem()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "shell".into());
+                    (p, args, name)
+                }
+            };
             Ok(Spec {
-                program: term::shell(),
-                args: vec![],
-                label: format!("shell in {}", cwd.display()),
+                program,
+                args,
+                label: format!("{} in {}", name, cwd.display()),
                 cwd,
                 env: vec![],
             })
@@ -2690,6 +3023,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/delegations/{id}/cancel", post(delegation_cancel))
         .route("/api/term", get(term_ws))
         .route("/api/term/check", get(term_check))
+        .route("/api/workflow-files", axum::routing::put(repo_wf_save))
+        .route("/api/workflow-files/delete", post(repo_wf_delete))
         .route("/api/term/sessions", get(term_sessions))
         .route("/api/term/sessions/{id}/close", post(term_close))
         .route("/api/overview", get(overview))
@@ -2712,6 +3047,11 @@ pub fn router(app: Arc<App>) -> Router {
         )
         .route("/api/board/items/{id}/run", post(board_run))
         .route("/api/board/import", post(board_import))
+        .route("/api/boards", post(boards_create))
+        .route(
+            "/api/boards/{id}",
+            axum::routing::put(boards_update).delete(boards_delete),
+        )
         .route("/api/secrets", get(secrets_list))
         .route(
             "/api/secrets/{name}",
@@ -2833,6 +3173,9 @@ mod tests {
             workflows: vec![],
             teams: vec![],
             marketplaces: vec![],
+            terminal: Default::default(),
+            workflow_errors: vec![],
+            repo_dirs: vec![],
         };
         let app = App::new(settings, TOKEN.into(), true);
         (app, dir)
@@ -3077,6 +3420,152 @@ mod tests {
             assert_eq!(s, StatusCode::FORBIDDEN, "{}", rel);
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Workflows kept in a repository: saved there from the editor, used at
+    /// once, moved back into indra.toml, and only into known repositories.
+    #[tokio::test]
+    async fn workflows_are_saved_into_repositories() {
+        let dir = std::env::temp_dir().join(format!("indra-repowf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("api")).unwrap();
+        let path = dir.join("indra.toml");
+        std::fs::write(&path, "[[harness]]\nname = \"h\"\nroot = \".\"\ntargets = [\"api\"]\n\n[[component]]\nname = \"lint\"\nprompt = \"lint {target}\"\n").unwrap();
+        let opts = config::LoadOptions {
+            config: Some(path.clone()),
+            targets: vec![],
+            bind: None,
+            read_only: false,
+            cwd: dir.clone(),
+        };
+        let app = App::with_config(
+            config::load(opts.clone()).unwrap(),
+            TOKEN.into(),
+            true,
+            Some(ConfigAccess {
+                opts: opts.clone(),
+                path: path.clone(),
+                locked: None,
+                saving: Mutex::new(()),
+            }),
+        );
+        let origin = ("origin", "http://127.0.0.1:7878");
+        let (st, _, body) = call(&app, "GET", "/api/config", &[AUTH], None).await;
+        assert_eq!(st, StatusCode::OK);
+        let c: Value = serde_json::from_str(&body).unwrap();
+        // The default profiles and team come with the config payload.
+        assert!(c["builtin"]["profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "planner"));
+        assert_eq!(c["builtin"]["teams"][0]["name"], "plan-and-build");
+        let repo = c["repo"]["repos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["dir"].as_str().unwrap().to_string())
+            .find(|d| d.ends_with("api"))
+            .expect("the target is a repository");
+        let wf = json!({ "name": "triage", "task": [
+            { "id": "scan", "skill": "sh-security-review", "profile": "planner" },
+            { "id": "lint", "component": "lint", "needs": ["scan"] }
+        ]});
+        let (st, _, body) = call(
+            &app,
+            "PUT",
+            "/api/workflow-files",
+            &[AUTH, origin],
+            Some(json!({
+                "repo": repo, "workflow": wf,
+                "components": [{ "name": "lint", "prompt": "lint {target}" }]
+            })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{}", body);
+        let r: Value = serde_json::from_str(&body).unwrap();
+        let file = r["file"].as_str().unwrap().to_string();
+        assert!(
+            file.ends_with(".indra/workflows/triage.toml")
+                || file.ends_with(".indra\\workflows\\triage.toml")
+        );
+        assert!(r["problem"].is_null(), "{}", r["problem"]);
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.starts_with("# indra workflow: triage."), "{}", text);
+        assert!(
+            text.contains("skill = \"sh-security-review\"") && text.contains("[[component]]"),
+            "{}",
+            text
+        );
+        // Used at once: runs in the repository, the skill as its command.
+        let w = app.settings().workflow("triage").cloned().expect("loaded");
+        assert_eq!(w.tasks[0].prompt, "/sh-security-review {target}");
+        assert!(w.tasks[0].target.ends_with("api"));
+        let (_, _, body) = call(&app, "GET", "/api/workflows", &[AUTH], None).await;
+        let l: Value = serde_json::from_str(&body).unwrap();
+        let d = l["defs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["name"] == "triage")
+            .unwrap();
+        assert!(d["source"].as_str().unwrap().ends_with("triage.toml"));
+        // Renamed in place: the same file, the old name gone.
+        let mut wf2 = wf.clone();
+        wf2["name"] = json!("triage-2");
+        let (st, _, body) = call(
+            &app,
+            "PUT",
+            "/api/workflow-files",
+            &[AUTH, origin],
+            Some(json!({
+                "repo": repo, "workflow": wf2, "original_file": file, "original_name": "triage"
+            })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{}", body);
+        assert!(app.settings().workflow("triage").is_none());
+        assert!(app.settings().workflow("triage-2").is_some());
+        // Only into a repository this console knows, and only its workflow files.
+        let (st, _, _) = call(
+            &app,
+            "PUT",
+            "/api/workflow-files",
+            &[AUTH, origin],
+            Some(json!({
+                "repo": "/etc", "workflow": wf
+            })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+        let (st, _, _) = call(
+            &app,
+            "POST",
+            "/api/workflow-files/delete",
+            &[AUTH, origin],
+            Some(json!({
+                "file": path.display().to_string(), "name": "x"
+            })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+        assert!(path.exists(), "indra.toml untouched");
+        // Deleting the last workflow deletes the file (its saved task goes with it).
+        let (st, _, body) = call(
+            &app,
+            "POST",
+            "/api/workflow-files/delete",
+            &[AUTH, origin],
+            Some(json!({
+                "file": file, "name": "triage-2"
+            })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{}", body);
+        let left = config::read_repo_file(std::path::Path::new(&file)).unwrap();
+        assert!(left.workflow.is_empty() && left.component.len() == 1);
+        assert!(app.settings().workflow("triage-2").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The Settings page: edits keep the file's comments, apply at once, and

@@ -365,6 +365,7 @@ pub fn needed(method: &str, path: &str) -> Role {
         "/api/tools/skills",
         "/api/tools/site",
         "/api/nodes/enrol",
+        "/api/workflow-files",
     ]
     .iter()
     .any(|p| under(p))
@@ -383,6 +384,7 @@ mod tests {
         assert_eq!(needed("GET", "/api/procs"), Role::Viewer);
         assert_eq!(needed("POST", "/api/procs"), Role::Operator);
         assert_eq!(needed("POST", "/api/workflows"), Role::Operator);
+        assert_eq!(needed("PUT", "/api/workflow-files"), Role::Admin);
         assert_eq!(needed("POST", "/api/run/post"), Role::Operator);
         assert_eq!(needed("GET", "/api/config"), Role::Admin);
         assert_eq!(needed("GET", "/api/secrets"), Role::Admin);
