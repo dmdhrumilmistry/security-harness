@@ -628,6 +628,10 @@ pub struct RunArgs {
     opts: DeckOpts,
     /// Workflow name from the config; omit to list them
     name: Option<String>,
+    /// A workflow input, e.g. --input pr=123 (repeatable; `indra run NAME --help`
+    /// lists them when you run it without the required ones)
+    #[arg(long = "input", value_name = "NAME=VALUE")]
+    inputs: Vec<String>,
 }
 
 fn clock() -> String {
@@ -649,6 +653,18 @@ pub fn run_workflow(a: RunArgs) -> Result<ExitCode, String> {
                 w.tasks.len(),
                 w.description
             );
+            if !w.inputs.is_empty() {
+                let ins: Vec<String> = w
+                    .inputs
+                    .iter()
+                    .map(|i| format!("{}{}", i.name, if i.required { "*" } else { "" }))
+                    .collect();
+                println!(
+                    "{:<20} --input {}=...  (* required)",
+                    "",
+                    ins.join("=... --input ")
+                );
+            }
         }
         return Ok(ExitCode::SUCCESS);
     };
@@ -660,7 +676,14 @@ pub fn run_workflow(a: RunArgs) -> Result<ExitCode, String> {
     rt.block_on(async move {
         let procs = crate::deck::procs::Procs::new(s.data_dir.join("logs"));
         let engine = workflows::Engine::new(procs.clone(), config::Shared::new((*s).clone()));
-        let id = engine.start_named(&name)?;
+        let mut given = std::collections::BTreeMap::new();
+        for kv in &a.inputs {
+            let (k, v) = kv
+                .split_once('=')
+                .ok_or_else(|| format!("--input takes NAME=VALUE, not {:?}", kv))?;
+            given.insert(k.trim().to_string(), v.to_string());
+        }
+        let id = engine.start_with_inputs(&name, &given)?;
         println!("{} workflow '{}' started", clock(), name);
         let mut seen: std::collections::HashMap<String, (&'static str, u32)> =
             std::collections::HashMap::new();

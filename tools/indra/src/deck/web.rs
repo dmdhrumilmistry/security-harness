@@ -1256,12 +1256,25 @@ async fn node_run_fetch(
 // ---- workflows -------------------------------------------------------------------
 
 async fn workflows_list(State(app): State<Arc<App>>) -> Json<Value> {
-    Json(json!({ "defs": app.settings().workflows, "runs": app.engine.list() }))
+    let defs: Vec<Value> = app
+        .settings()
+        .workflows
+        .iter()
+        .map(|w| {
+            let mut v = json!(w);
+            v["builtin"] = json!(w.builtin);
+            v
+        })
+        .collect();
+    Json(json!({ "defs": defs, "runs": app.engine.list() }))
 }
 
 #[derive(Deserialize)]
 struct RunWfReq {
     name: String,
+    /// The workflow's inputs, by name.
+    #[serde(default)]
+    inputs: std::collections::BTreeMap<String, String>,
 }
 
 async fn workflow_run(
@@ -1271,7 +1284,10 @@ async fn workflow_run(
     if app.settings().read_only {
         return Err(forbidden("indra is running read-only"));
     }
-    let id = app.engine.start_named(&r.name).map_err(bad)?;
+    let id = app
+        .engine
+        .start_with_inputs(&r.name, &r.inputs)
+        .map_err(bad)?;
     Ok(Json(json!({ "id": id })))
 }
 

@@ -129,8 +129,374 @@ pub struct WorkflowCfg {
     /// Harness whose name is recorded with each task (default: the first).
     #[serde(default)]
     pub harness: Option<String>,
+    /// What the person running it fills in; tasks use them as `{input.NAME}`.
+    #[serde(default, rename = "input", skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<InputCfg>,
     #[serde(default, rename = "task", skip_serializing_if = "Vec::is_empty")]
     pub tasks: Vec<TaskCfg>,
+    /// One of indra's own (not in the config file).
+    #[serde(skip)]
+    pub builtin: bool,
+}
+
+/// One input of a workflow (`[[workflow.input]]`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputCfg {
+    /// `{input.NAME}` in a task's prompt, target, profile or model.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub help: String,
+    /// text (default) | choice | bool | target (one of the harness's
+    /// targets) | profile (a configured profile)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// text: a regular expression the whole value must match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    /// choice: the values to pick from.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<ChoiceCfg>,
+    /// bool: what `{input.NAME}` becomes when ticked (empty when not).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when_true: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChoiceCfg {
+    /// What `{input.NAME}` becomes (may be empty).
+    #[serde(default)]
+    pub value: String,
+    pub label: String,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+pub const INPUT_KINDS: [&str; 5] = ["text", "choice", "bool", "target", "profile"];
+
+/// The workflows indra brings for its own harness: a pull request review and
+/// a full security review. A configured workflow with the same name wins.
+pub fn builtin_workflows() -> Vec<WorkflowCfg> {
+    #[derive(Deserialize)]
+    struct W {
+        workflow: Vec<WorkflowCfg>,
+    }
+    let mut list = toml::from_str::<W>(BUILTIN_WORKFLOWS)
+        .map(|w| w.workflow)
+        .unwrap_or_default();
+    for w in &mut list {
+        w.builtin = true;
+    }
+    // What a configured task gets by default.
+    for t in list.iter_mut().flat_map(|w| w.tasks.iter_mut()) {
+        if t.node.is_empty() {
+            t.node = crate::deck::nodes::LOCAL.into();
+        }
+        if t.runner.is_empty() {
+            t.runner = "claude".into();
+        }
+    }
+    list
+}
+
+const BUILTIN_WORKFLOWS: &str = r##"
+[[workflow]]
+name = "pr-review"
+description = "Security-review a pull request: inline comments and a pass/fail status (a dry run unless you untick it)"
+harness = "indra"
+[[workflow.input]]
+name = "pr"
+label = "Pull request"
+kind = "text"
+required = true
+placeholder = "https://github.com/owner/repo/pull/123, or 123"
+pattern = '(https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]{1,9}|[0-9]{1,9})'
+help = "A pull request URL, or a number in the checkout's own repository."
+[[workflow.input]]
+name = "target"
+label = "Checkout"
+kind = "target"
+required = true
+help = "A clone of the pull request's repository."
+[[workflow.input]]
+name = "profile"
+label = "Profile"
+kind = "profile"
+help = "Any runner and model, a local one through Ollama included."
+[[workflow.input]]
+name = "depth"
+label = "Depth"
+kind = "choice"
+options = [
+  { value = "", label = "from the diff" },
+  { value = "--tier=0", label = "0: triage only" },
+  { value = "--tier=1", label = "1: targeted" },
+  { value = "--tier=2", label = "2: standard" },
+  { value = "--tier=3", label = "3: full" },
+]
+[[workflow.input]]
+name = "fail_on"
+label = "Fail on"
+kind = "choice"
+options = [
+  { value = "", label = "default" },
+  { value = "--fail-on=critical", label = "critical" },
+  { value = "--fail-on=high", label = "high" },
+  { value = "--fail-on=medium", label = "medium" },
+  { value = "--fail-on=low", label = "low" },
+]
+[[workflow.input]]
+name = "deep"
+label = "Deep: every changed file, not just the risky ones"
+kind = "bool"
+when_true = "--deep"
+[[workflow.input]]
+name = "dry_run"
+label = "Dry run: post nothing; post from the run's page when you have read it"
+kind = "bool"
+default = "true"
+when_true = "--dry-run"
+[[workflow.task]]
+id = "review"
+target = "{input.target}"
+profile = "{input.profile}"
+prompt = "/sh-pr-review {input.pr} {input.depth} {input.fail_on} {input.deep} {input.dry_run}"
+
+[[workflow]]
+name = "security-review"
+description = "A full security review of a codebase: recon, hunt, chain, verify, report"
+harness = "indra"
+[[workflow.input]]
+name = "target"
+label = "Codebase"
+kind = "target"
+required = true
+[[workflow.input]]
+name = "focus"
+label = "Focus"
+kind = "text"
+placeholder = "optional: classes:sqli,ssrf or stage:recon"
+pattern = '[A-Za-z0-9 :,._/-]{0,200}'
+help = "Leave empty for everything."
+[[workflow.input]]
+name = "profile"
+label = "Profile"
+kind = "profile"
+[[workflow.task]]
+id = "review"
+target = "{input.target}"
+profile = "{input.profile}"
+prompt = "/sh-security-review {target} {input.focus}"
+"##;
+
+/// `{input.NAME}` references in a task.
+fn input_refs(t: &TaskCfg) -> Vec<String> {
+    let mut out = Vec::new();
+    let fields = [
+        Some(t.prompt.as_str()),
+        Some(t.target.as_str()),
+        t.profile.as_deref(),
+        t.model.as_deref(),
+    ];
+    for f in fields.into_iter().flatten() {
+        let mut rest = f;
+        while let Some(i) = rest.find("{input.") {
+            let after = &rest[i + 7..];
+            match after.find('}') {
+                Some(j) => {
+                    out.push(after[..j].to_string());
+                    rest = &after[j + 1..];
+                }
+                None => break,
+            }
+        }
+    }
+    out
+}
+
+/// A workflow's inputs are well formed and every reference names one.
+pub fn validate_inputs(w: &WorkflowCfg) -> Result<()> {
+    let at = |m: String| format!("workflow '{}': {}", w.name, m);
+    let mut names: Vec<&str> = Vec::new();
+    for i in &w.inputs {
+        let ok = !i.name.is_empty()
+            && i.name.len() <= 40
+            && i.name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !ok || names.contains(&i.name.as_str()) {
+            return Err(at(format!(
+                "input name {:?} is invalid or used twice",
+                i.name
+            )));
+        }
+        names.push(&i.name);
+        let kind = if i.kind.is_empty() {
+            "text"
+        } else {
+            i.kind.as_str()
+        };
+        if !INPUT_KINDS.contains(&kind) {
+            return Err(at(format!(
+                "input '{}': kind must be one of {}",
+                i.name,
+                INPUT_KINDS.join(", ")
+            )));
+        }
+        if kind == "choice" && i.options.is_empty() {
+            return Err(at(format!(
+                "input '{}' is a choice with no options",
+                i.name
+            )));
+        }
+        if let Some(p) = &i.pattern {
+            regex::Regex::new(&format!("^(?:{})$", p))
+                .map_err(|e| at(format!("input '{}': bad pattern: {}", i.name, e)))?;
+        }
+    }
+    for t in &w.tasks {
+        for r in input_refs(t) {
+            if !names.contains(&r.as_str()) {
+                return Err(at(format!(
+                    "task '{}' uses {{input.{}}}, which is not an input",
+                    t.id, r
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The workflow with the inputs filled in, each checked: required ones
+/// given, text matching its pattern (and free of control characters),
+/// choices among their options, targets among the harness's, profiles
+/// configured. Empty profile or model fields fall back to none.
+pub fn apply_inputs(
+    w: &WorkflowCfg,
+    given: &std::collections::BTreeMap<String, String>,
+    targets: &[PathBuf],
+    profiles: &[String],
+) -> Result<WorkflowCfg> {
+    let at = |m: String| format!("{}: {}", w.name, m);
+    for k in given.keys() {
+        if !w.inputs.iter().any(|i| &i.name == k) {
+            return Err(at(format!("there is no input '{}'", k)));
+        }
+    }
+    let mut values: Vec<(String, String)> = Vec::new();
+    for i in &w.inputs {
+        let label = if i.label.is_empty() {
+            &i.name
+        } else {
+            &i.label
+        };
+        let raw = given
+            .get(&i.name)
+            .cloned()
+            .or_else(|| i.default.clone())
+            .unwrap_or_default();
+        let raw = raw.trim().to_string();
+        if raw.chars().any(|c| c.is_control()) || raw.len() > 2000 {
+            return Err(at(format!("{}: not a single line of text", label)));
+        }
+        let kind = if i.kind.is_empty() {
+            "text"
+        } else {
+            i.kind.as_str()
+        };
+        if raw.is_empty() && i.required && kind != "bool" {
+            return Err(at(format!("{} is required", label)));
+        }
+        let v = match kind {
+            "bool" => {
+                if matches!(raw.as_str(), "true" | "1" | "yes" | "on") {
+                    i.when_true.clone().unwrap_or_else(|| "true".into())
+                } else {
+                    String::new()
+                }
+            }
+            "choice" => {
+                if !i.options.iter().any(|o| o.value == raw) {
+                    return Err(at(format!("{}: not one of the choices", label)));
+                }
+                raw
+            }
+            "target" if !raw.is_empty() => {
+                let p = PathBuf::from(&raw);
+                if !targets.contains(&p) {
+                    return Err(at(format!("{}: not one of the harness's targets", label)));
+                }
+                raw
+            }
+            "profile" if !raw.is_empty() => {
+                if !profiles.contains(&raw) {
+                    return Err(at(format!("{}: no profile named '{}'", label, raw)));
+                }
+                raw
+            }
+            _ => {
+                if let (Some(p), false) = (&i.pattern, raw.is_empty()) {
+                    let re = regex::Regex::new(&format!("^(?:{})$", p))
+                        .map_err(|e| at(e.to_string()))?;
+                    if !re.is_match(&raw) {
+                        return Err(at(format!(
+                            "{}: {:?} is not in the expected form",
+                            label, raw
+                        )));
+                    }
+                }
+                raw
+            }
+        };
+        values.push((format!("{{input.{}}}", i.name), v));
+    }
+    let fill = |s: &str| {
+        let mut s = s.to_string();
+        for (k, v) in &values {
+            s = s.replace(k, v);
+        }
+        s
+    };
+    // Empty inputs leave double spaces in a command line; tidy those.
+    let tidy = |s: String| {
+        s.lines()
+            .map(|l| {
+                l.split([' ', '\t'])
+                    .filter(|x| !x.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut out = w.clone();
+    out.inputs.clear();
+    for t in &mut out.tasks {
+        t.prompt = tidy(fill(&t.prompt));
+        t.target = fill(&t.target);
+        t.profile = t
+            .profile
+            .as_deref()
+            .map(fill)
+            .filter(|p| !p.trim().is_empty());
+        t.model = t
+            .model
+            .as_deref()
+            .map(fill)
+            .filter(|m| !m.trim().is_empty());
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -1305,6 +1671,10 @@ pub fn build_settings(
     }
     for w in &file.workflow {
         for t in &w.tasks {
+            // `{input.profile}` is checked when the workflow runs.
+            if t.profile.as_deref().is_some_and(|p| p.contains("{input.")) {
+                continue;
+            }
             known(
                 &t.profile,
                 &format!("workflow '{}' task '{}'", w.name, t.id),
@@ -1368,7 +1738,11 @@ pub fn build_settings(
         crate::deck::nodes::validate_name(&w.name).map_err(|e| format!("workflow name: {}", e))?;
         let mut w = expand_workflow(w, &file.workflow, &file.component)?;
         validate_workflow(&w, &node_names)?;
+        validate_inputs(&w)?;
         for t in &w.tasks {
+            if t.model.as_deref().is_some_and(|m| m.contains("{input.")) {
+                continue;
+            }
             crate::deck::nodes::AgentOpts {
                 model: t.model.clone(),
                 provider: t.provider.clone().filter(|p| !p.is_empty()),
@@ -1377,13 +1751,22 @@ pub fn build_settings(
             .validate()
             .map_err(|e| format!("workflow '{}' task '{}': {}", w.name, t.id, e))?;
         }
-        // Local targets are relative to the config file; remote ones are the remote's business.
+        // Local targets are relative to the config file; remote ones are the
+        // remote's business. One from an input is resolved when it runs.
         for t in &mut w.tasks {
-            if t.node == crate::deck::nodes::LOCAL {
+            if t.node == crate::deck::nodes::LOCAL && !t.target.contains("{input.") {
                 t.target = abs(expand(&base, &t.target)).to_string_lossy().into_owned();
             }
         }
         workflows.push(w);
+    }
+    // indra's own workflows, for its harness, unless configured otherwise.
+    if file.builtins.unwrap_or(true) && harnesses.iter().any(|h| h.name == "indra") {
+        for b in builtin_workflows() {
+            if !workflows.iter().any(|w| w.name == b.name) {
+                workflows.push(b);
+            }
+        }
     }
 
     Ok(Settings {
@@ -1663,6 +2046,74 @@ needs = ["sub"]
             let f: ConfigFile = toml::from_str(&format!("{}{}", base, bad)).unwrap();
             assert!(build_settings(&opts, None, &f).is_err(), "{}", bad);
         }
+    }
+
+    #[test]
+    fn workflow_inputs() {
+        let b = builtin_workflows();
+        assert_eq!(
+            b.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(),
+            vec!["pr-review", "security-review"]
+        );
+        for w in &b {
+            validate_inputs(w).unwrap();
+            validate_workflow(w, &[]).unwrap();
+        }
+        let pr = &b[0];
+        let targets = vec![PathBuf::from("/code/shop")];
+        let profiles = vec!["local".to_string()];
+        let mut g = std::collections::BTreeMap::new();
+        g.insert(
+            "pr".to_string(),
+            "https://github.com/acme/shop/pull/7".to_string(),
+        );
+        g.insert("target".to_string(), "/code/shop".to_string());
+        g.insert("depth".to_string(), "--tier=2".to_string());
+        g.insert("deep".to_string(), "true".to_string());
+        let w = apply_inputs(pr, &g, &targets, &profiles).unwrap();
+        let t = &w.tasks[0];
+        // Unset inputs leave no gaps; dry run is on by default.
+        assert_eq!(
+            t.prompt,
+            "/sh-pr-review https://github.com/acme/shop/pull/7 --tier=2 --deep --dry-run"
+        );
+        assert_eq!(t.target, "/code/shop");
+        assert_eq!(t.profile, None);
+        g.insert("dry_run".to_string(), "false".to_string());
+        g.insert("profile".to_string(), "local".to_string());
+        let w = apply_inputs(pr, &g, &targets, &profiles).unwrap();
+        assert_eq!(
+            w.tasks[0].prompt,
+            "/sh-pr-review https://github.com/acme/shop/pull/7 --tier=2 --deep"
+        );
+        assert_eq!(w.tasks[0].profile.as_deref(), Some("local"));
+        // Refusals: required, pattern (no injection), choices, targets, profiles, unknown names.
+        for (k, v) in [
+            ("pr", ""),
+            ("pr", "7; rm -rf /"),
+            ("pr", "https://evil.example/a/b/pull/1"),
+            ("depth", "--tier=9"),
+            ("target", "/etc"),
+            ("profile", "nobody"),
+            ("nope", "x"),
+            ("pr", "12\n/other"),
+        ] {
+            let mut g2 = g.clone();
+            g2.insert(k.to_string(), v.to_string());
+            assert!(
+                apply_inputs(pr, &g2, &targets, &profiles).is_err(),
+                "{}={:?}",
+                k,
+                v
+            );
+        }
+        // A task may only use inputs the workflow declares.
+        let mut bad = pr.clone();
+        bad.tasks[0].prompt = "/x {input.missing}".into();
+        assert!(validate_inputs(&bad).is_err());
+        let mut bad = pr.clone();
+        bad.inputs[0].kind = "file".into();
+        assert!(validate_inputs(&bad).is_err());
     }
 
     #[test]

@@ -56,7 +56,16 @@ their section; nothing is deleted, items are checked off with the change that di
 - [x] Release workflow: tag must match the crate version; `SHA256SUMS` and the install scripts on
       each release; install instructions in the release notes
 - [x] Docs lead with the one-liners; the console's Add a machine shows install, then connect
-- [ ] Cut the first binary release (`indra-v0.2.0`) and try the one-liners against it
+- [x] Cut the first binary release (`indra-v0.2.0`) and try the one-liners against it (the
+      install.sh one-liner installed 0.2.0, a 14.5 MB static Linux build; `update --check` agreed)
+- [x] Release from Actions (Run workflow with a version), for when tags cannot be pushed (#37)
+
+## Requested next
+
+- [x] Terminal: prompt icons render (Nerd Font symbols bundled, UTF-8 locale) (#38)
+- [x] Workflows take inputs; **pr-review** and **security-review** are built-in workflows;
+      Runs has **Run a workflow** instead of a PR-only form; `indra run NAME --input k=v`
+- [ ] Users and roles (RBAC) for the console instead of an access token in the URL
 
 ## Not planned yet (the docs say so)
 

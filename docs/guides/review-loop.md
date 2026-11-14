@@ -5,14 +5,17 @@ found, compare it with the last review, remember what was dismissed, and post it
 
 ## 1. Start the review
 
-**Runs > Review a pull request.** Give the PR (a URL, or a number for the checkout's own
-repository), the checkout to run in (a clone of the PR's repository, one of the harness's
-targets), and a profile: any runner and model, a local one through Ollama included (see
-[Local models with Ollama](local-models.md)). Optionally pick the depth (tier 0 to 3, or let the
-review choose from the diff), **Deep** for every changed file, and the severity that fails the PR.
+**Runs > Run a workflow**, then **pr-review** (a built-in workflow; **security-review** and the
+workflows you configure are in the same list). Give the PR (a URL, or a number for the
+checkout's own repository), the checkout to run in (a clone of the PR's repository, one of the
+harness's targets), and a profile: any runner and model, a local one through Ollama included
+(see [Local models with Ollama](local-models.md)). Optionally pick the depth (tier 0 to 3, or let
+the review choose from the diff), **Deep** for every changed file, and the severity that fails
+the PR. From a terminal: `indra run pr-review --input pr=<PR> --input target=<checkout>`.
 
-This starts `/sh-pr-review <PR> [--tier=N] [--deep] [--fail-on=...] --dry-run` and takes you to
-the agent's page, where you can watch it, approve its tool requests and steer it. **Dry run** is
+This runs `/sh-pr-review <PR> [--tier=N] [--deep] [--fail-on=...] --dry-run` as the workflow's
+one task; open its agent from the workflow run to watch it, approve its tool requests and steer
+it. **Dry run** is
 on by default: the review is written to the run's folder, and nothing is posted until you choose
 to, below.
 

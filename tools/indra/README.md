@@ -794,6 +794,57 @@ $ indra run nightly
 17:23:40 workflow 'nightly' succeeded
 ```
 
+**Inputs.** A workflow can ask for values when it runs, and its tasks use them as
+`{input.NAME}` in their prompt, target, profile or model:
+
+```toml
+[[workflow]]
+name = "triage-pr"
+
+[[workflow.input]]
+name     = "pr"
+label    = "Pull request"
+required = true
+pattern  = '[0-9]{1,9}'                  # text inputs may require a form
+[[workflow.input]]
+name = "target"
+kind = "target"                          # one of the harness's targets
+[[workflow.input]]
+name    = "depth"
+kind    = "choice"
+options = [{ value = "", label = "auto" }, { value = "--tier=2", label = "standard" }]
+[[workflow.input]]
+name      = "dry_run"
+kind      = "bool"
+default   = "true"
+when_true = "--dry-run"                  # what {input.dry_run} becomes when ticked
+[[workflow.input]]
+name = "profile"
+kind = "profile"                         # a configured profile, or none
+
+[[workflow.task]]
+id      = "review"
+target  = "{input.target}"
+profile = "{input.profile}"
+prompt  = "/sh-pr-review {input.pr} {input.depth} {input.dry_run}"
+```
+
+Kinds are `text` (the default), `choice`, `bool`, `target` and `profile`. Each value is checked
+when the workflow starts: required ones present, text matching its pattern and on one line,
+choices and targets among their options, profiles configured. An empty input leaves no gap in
+the prompt.
+
+**Built in:** with the indra harness, two workflows are always there (a configured workflow of
+the same name replaces one): **pr-review** (pull request, checkout, profile, depth, fail-on,
+deep, dry run; dry run is on by default) and **security-review** (codebase, optional focus,
+profile). Run any workflow from **Runs > Run a workflow** or the **Workflows** page (both ask for
+its inputs), or from the terminal:
+
+```bash
+indra run pr-review --input pr=https://github.com/acme/shop/pull/7 --input target=$PWD --input depth=--tier=2
+indra run                                # lists the workflows and their inputs (* required)
+```
+
 **The graph editor.** **Workflows > New workflow** (or **Edit graph** on a workflow) opens a
 canvas: drag tasks, components and other workflows in from the palette, drag from a task's right
 edge to another task to make it run after the first, and edit the selected step on the right.
