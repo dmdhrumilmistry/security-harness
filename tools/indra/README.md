@@ -437,6 +437,10 @@ The console can start programs and rewrite prompts, so it is built like a remote
 - **A token on every API call**, random per start (or `--token` / `INDRA_TOKEN`, 16+
   characters), sent as an `HttpOnly`, `SameSite=Strict` cookie or `Authorization: Bearer`, and
   compared in constant time.
+- **Users and roles, for teams.** `indra user add NAME` (or Settings > Users) switches the console
+  to sign-in with a name and password and three roles (viewer, operator, admin), checked by the
+  server on every call, with an audit log of every change. The token then stays a key for tools
+  only. See [Users and roles](../../docs/guides/users-and-roles.md).
 - **No DNS rebinding.** On loopback, a request whose `Host` is not `localhost`, `127.0.0.1` or
   `[::1]` is refused, token or not.
 - **No CSRF.** State-changing requests must be same-origin (`Origin`, `Sec-Fetch-Site`) and JSON.

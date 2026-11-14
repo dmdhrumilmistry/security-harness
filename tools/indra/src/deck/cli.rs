@@ -226,6 +226,7 @@ async fn serve(
         addr.to_string()
     };
     let url = format!("http://{}/?token={}", host, token);
+    let base_url = format!("http://{}/", host);
 
     println!("indra {}", env!("CARGO_PKG_VERSION"));
     for h in &s.harnesses {
@@ -286,10 +287,21 @@ async fn serve(
     if !loopback {
         eprintln!("indra: WARNING listening on {} - anyone who can reach it and has the token can run agents on this machine", addr);
     }
-    println!(
-        "\nOpen: {}\n(the token in this URL is the password; keep it private)",
+    // With users, people sign in; the token stays a key for tools only.
+    let has_users = crate::deck::users::Users::open(&s.data_dir).any();
+    let url = if has_users {
+        println!(
+            "\nOpen: {}\n(sign in with your indra user; `indra user add` makes one)",
+            base_url
+        );
+        base_url.clone()
+    } else {
+        println!(
+            "\nOpen: {}\n(the token in this URL is the password; keep it private. `indra user add NAME` switches to sign-in with users and roles)",
+            url
+        );
         url
-    );
+    };
 
     if open {
         open_browser(&url);

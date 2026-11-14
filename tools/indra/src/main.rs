@@ -81,6 +81,8 @@ enum Cmd {
     Skills(skills::SkillsArgs),
     /// Update indra to the newest release (checks its SHA-256 first)
     Update(update::UpdateArgs),
+    /// Console users and roles: add, list, passwd, role, rm
+    User(deck::users::UserArgs),
     /// Maintainer tools: build the website
     #[command(hide = true)]
     Dev {
@@ -119,6 +121,7 @@ fn main() -> ExitCode {
         Cmd::Attach(a) => deck::cli::run_attach(a),
         Cmd::Claude(a) => deck::claude::run(a),
         Cmd::Update(a) => update::run(a),
+        Cmd::User(a) => deck::users::run(a),
         Cmd::Publish(a) => publish::run(a),
         Cmd::Review(a) => review::run(a),
         Cmd::Skills(a) => skills::run(a),

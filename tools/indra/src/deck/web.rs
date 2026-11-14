@@ -60,6 +60,8 @@ pub struct App {
     pub delegations: crate::deck::delegate::Delegations,
     /// Plugin and skill marketplaces, and what was installed from them.
     pub market: crate::deck::market::Market,
+    /// Console users and their sessions (none: the token is the key).
+    pub users: crate::deck::users::Users,
 }
 
 /// What the console needs to edit the config file and apply the result.
@@ -95,6 +97,7 @@ impl App {
             settings.data_dir.join("learnings.json"),
         ));
         let market = crate::deck::market::Market::open(&settings.data_dir);
+        let users = crate::deck::users::Users::open(&settings.data_dir);
         let shared = config::Shared::new(settings);
         let engine = Engine::new(procs.clone(), shared.clone());
         Arc::new(App {
@@ -110,6 +113,7 @@ impl App {
             learnings,
             delegations: Default::default(),
             market,
+            users,
         })
     }
 
@@ -121,6 +125,8 @@ impl App {
 }
 
 const COOKIE: &str = "indra_token";
+/// A signed-in user's session (once users exist).
+const SESSION: &str = "indra_session";
 const INDEX: &str = include_str!("../../ui/index.html");
 const APP_JS: &str = include_str!("../../ui/app.js");
 const STYLE: &str = include_str!("../../ui/style.css");
@@ -202,6 +208,53 @@ fn presented_token(h: &HeaderMap) -> Option<String> {
     None
 }
 
+fn cookie(h: &HeaderMap, name: &str) -> Option<String> {
+    for c in h.get_all(header::COOKIE) {
+        let Ok(c) = c.to_str() else { continue };
+        for part in c.split(';') {
+            if let Some(v) = part.trim().strip_prefix(&format!("{}=", name)) {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Who sent a request: a signed-in user, or the access token (an admin
+/// credential; once users exist, only as `Authorization: Bearer`).
+fn identify(app: &App, h: &HeaderMap) -> Option<crate::deck::users::Who> {
+    use crate::deck::users::{Role, Who};
+    if let Some(w) = cookie(h, SESSION).and_then(|t| app.users.session(&t)) {
+        return Some(w);
+    }
+    let bearer = h
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|t| t.trim().to_string());
+    let token = if app.users.any() {
+        bearer
+    } else {
+        presented_token(h)
+    };
+    token
+        .filter(|t| ct_eq(t.as_bytes(), app.token.as_bytes()))
+        .map(|_| Who {
+            user: "token".into(),
+            role: Role::Admin,
+        })
+}
+
+/// The person behind a request (set by the guard).
+pub(crate) fn who(h: &axum::http::Extensions) -> crate::deck::users::Who {
+    h.get::<crate::deck::users::Who>()
+        .cloned()
+        .unwrap_or(crate::deck::users::Who {
+            user: "token".into(),
+            role: crate::deck::users::Role::Admin,
+        })
+}
+
 fn host_name(h: &HeaderMap) -> Option<String> {
     let host = h.get(header::HOST)?.to_str().ok()?.trim().to_lowercase();
     if let Some(rest) = host.strip_prefix('[') {
@@ -214,23 +267,44 @@ pub fn is_loopback_host(name: &str) -> bool {
     matches!(name, "localhost" | "127.0.0.1" | "[::1]") || name.ends_with(".localhost")
 }
 
-async fn guard(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
+async fn guard(State(app): State<Arc<App>>, mut req: Request, next: Next) -> Response {
     let h = req.headers();
     if app.loopback && !host_name(h).map(|n| is_loopback_host(&n)).unwrap_or(false) {
         return forbidden("unexpected Host header").into_response();
     }
-    let path = req.uri().path();
+    let path = req.uri().path().to_string();
+    let mut audit: Option<crate::deck::users::Who> = None;
     if path.starts_with("/api/") {
-        let ok = presented_token(h)
-            .map(|t| ct_eq(t.as_bytes(), app.token.as_bytes()))
-            .unwrap_or(false);
-        if !ok {
-            return ApiError(
-                StatusCode::UNAUTHORIZED,
-                "missing or wrong token: open the URL `indra serve` printed when it started".into(),
-            )
-            .into_response();
+        // Signing in and out, and asking who you are, need no one yet.
+        let open = matches!(path.as_str(), "/api/session" | "/api/login" | "/api/logout");
+        let who = identify(&app, h);
+        if !open {
+            let Some(who) = who.clone() else {
+                let msg = if app.users.any() {
+                    "sign in first"
+                } else {
+                    "missing or wrong token: open the URL `indra serve` printed when it started"
+                };
+                return ApiError(StatusCode::UNAUTHORIZED, msg.into()).into_response();
+            };
+            let need = crate::deck::users::needed(req.method().as_str(), &path);
+            if who.role < need {
+                return forbidden(format!(
+                    "{} is a {} here; this needs {}",
+                    who.user,
+                    who.role.as_str(),
+                    need.as_str()
+                ))
+                .into_response();
+            }
         }
+        if let Some(w) = who {
+            if req.method() != Method::GET && req.method() != Method::HEAD {
+                audit = Some(w.clone());
+            }
+            req.extensions_mut().insert(w);
+        }
+        let h = req.headers();
         if req.method() != Method::GET && req.method() != Method::HEAD {
             if h.get("sec-fetch-site")
                 .and_then(|v| v.to_str().ok())
@@ -250,7 +324,27 @@ async fn guard(State(app): State<Arc<App>>, req: Request, next: Next) -> Respons
             }
         }
     }
+    let method = req.method().to_string();
     let mut res = next.run(req).await;
+    // Who changed what: one line per state-changing call.
+    if let Some(w) = audit {
+        let line = json!({
+            "at": crate::deck::runs::now(), "user": w.user, "role": w.role.as_str(),
+            "method": method, "path": path, "status": res.status().as_u16(),
+        });
+        let p = app.settings().data_dir.join("logs").join("audit.jsonl");
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&p)
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "{}", line);
+        }
+    }
     let hd = res.headers_mut();
     if !hd.contains_key("content-security-policy") {
         hd.insert("content-security-policy", HeaderValue::from_static(CSP));
@@ -267,6 +361,163 @@ async fn guard(State(app): State<Arc<App>>, req: Request, next: Next) -> Respons
     res
 }
 
+// ---- users and sessions ------------------------------------------------------------
+
+fn session_cookie(h: &HeaderMap, value: &str, max_age: Option<u64>) -> String {
+    // Secure when the console is reached over HTTPS (directly or behind a proxy).
+    let https = h
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("https"))
+        .unwrap_or(false)
+        || h.get(header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .map(|o| o.starts_with("https://"))
+            .unwrap_or(false);
+    let mut c = format!("{}={}; HttpOnly; SameSite=Strict; Path=/", SESSION, value);
+    if let Some(a) = max_age {
+        c.push_str(&format!("; Max-Age={}", a));
+    }
+    if https {
+        c.push_str("; Secure");
+    }
+    c
+}
+
+/// Who you are, and whether this console has users (the login page asks).
+async fn session_get(State(app): State<Arc<App>>, headers: HeaderMap) -> Json<Value> {
+    let who = identify(&app, &headers);
+    Json(json!({
+        "users": app.users.any(),
+        "user": who.as_ref().map(|w| w.user.clone()),
+        "role": who.as_ref().map(|w| w.role.as_str()),
+    }))
+}
+
+#[derive(Deserialize)]
+struct LoginReq {
+    name: String,
+    password: String,
+}
+
+async fn login(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Json(r): Json<LoginReq>,
+) -> Response {
+    if !app.users.any() {
+        return bad("this console has no users yet: open the URL `indra serve` printed, then add one in Settings > Users").into_response();
+    }
+    let (name, password) = (r.name.trim().to_string(), r.password);
+    // Argon2 is slow on purpose; keep it off the async workers.
+    let a = app.clone();
+    let res = tokio::task::spawn_blocking(move || a.users.sign_in(&name, &password))
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+    match res {
+        Ok((token, who)) => (
+            [(header::SET_COOKIE, session_cookie(&headers, &token, None))],
+            Json(json!({ "user": who.user, "role": who.role.as_str() })),
+        )
+            .into_response(),
+        Err(e) => ApiError(StatusCode::UNAUTHORIZED, e).into_response(),
+    }
+}
+
+async fn logout(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    if let Some(t) = cookie(&headers, SESSION) {
+        app.users.sign_out(&t);
+    }
+    (
+        [(header::SET_COOKIE, session_cookie(&headers, "", Some(0)))],
+        Json(json!({ "ok": true })),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct OwnPasswordReq {
+    current: String,
+    new: String,
+}
+
+/// Change your own password (the current one is asked again).
+async fn own_password(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Json(r): Json<OwnPasswordReq>,
+) -> ApiResult<Json<Value>> {
+    let who = cookie(&headers, SESSION)
+        .and_then(|t| app.users.session(&t))
+        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "sign in first".into()))?;
+    let a = app.clone();
+    tokio::task::spawn_blocking(move || {
+        a.users
+            .sign_in(&who.user, &r.current)
+            .map_err(|_| forbidden("the current password is wrong"))?;
+        a.users.set_password(&who.user, &r.new).map_err(bad)
+    })
+    .await
+    .map_err(|e| internal(e.to_string()))??;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn users_list(State(app): State<Arc<App>>) -> Json<Value> {
+    Json(json!(app
+        .users
+        .list()
+        .into_iter()
+        .map(|(n, r, c)| json!({ "name": n, "role": r.as_str(), "created": c }))
+        .collect::<Vec<_>>()))
+}
+
+#[derive(Deserialize)]
+struct UserReq {
+    name: Option<String>,
+    role: Option<String>,
+    password: Option<String>,
+}
+
+async fn user_add(State(app): State<Arc<App>>, Json(r): Json<UserReq>) -> ApiResult<Json<Value>> {
+    let role =
+        crate::deck::users::Role::parse(r.role.as_deref().unwrap_or("viewer")).map_err(bad)?;
+    let name = r.name.unwrap_or_default();
+    let pw = r.password.unwrap_or_default();
+    let a = app.clone();
+    tokio::task::spawn_blocking(move || a.users.add(name.trim(), role, &pw))
+        .await
+        .map_err(|e| internal(e.to_string()))?
+        .map_err(bad)?;
+    Ok(users_list(State(app)).await)
+}
+
+async fn user_update(
+    State(app): State<Arc<App>>,
+    UrlPath(name): UrlPath<String>,
+    Json(r): Json<UserReq>,
+) -> ApiResult<Json<Value>> {
+    if let Some(role) = r.role.as_deref() {
+        let role = crate::deck::users::Role::parse(role).map_err(bad)?;
+        app.users.set_role(&name, role).map_err(bad)?;
+    }
+    if let Some(pw) = r.password.clone() {
+        let (a, n) = (app.clone(), name.clone());
+        tokio::task::spawn_blocking(move || a.users.set_password(&n, &pw))
+            .await
+            .map_err(|e| internal(e.to_string()))?
+            .map_err(bad)?;
+    }
+    Ok(users_list(State(app)).await)
+}
+
+async fn user_remove(
+    State(app): State<Arc<App>>,
+    UrlPath(name): UrlPath<String>,
+) -> ApiResult<Json<Value>> {
+    app.users.remove(&name).map_err(bad)?;
+    Ok(users_list(State(app)).await)
+}
+
 // ---- static ------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -275,7 +526,8 @@ struct TokenQ {
 }
 
 async fn index(State(app): State<Arc<App>>, Query(q): Query<TokenQ>) -> Response {
-    if let Some(t) = q.token {
+    // Once users exist, people sign in; a token in a URL no longer does.
+    if let Some(t) = q.token.filter(|_| !app.users.any()) {
         if ct_eq(t.as_bytes(), app.token.as_bytes()) {
             // Trade the URL token for a cookie and drop it from the address bar.
             let cookie = format!(
@@ -359,11 +611,16 @@ fn harness_json(h: &Harness) -> Value {
 
 // ---- handlers ------------------------------------------------------------------
 
-async fn overview(State(app): State<Arc<App>>) -> Json<Value> {
+async fn overview(State(app): State<Arc<App>>, req: Request) -> Json<Value> {
     let s = &app.settings();
+    let me = who(req.extensions());
+    use crate::deck::users::Role;
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "read_only": s.read_only,
+        // A viewer sees the console as read-only.
+        "read_only": s.read_only || me.role == Role::Viewer,
+        "user": me.user, "role": me.role.as_str(), "users": app.users.any(),
+        "is_admin": me.role == Role::Admin,
         "shell": app.shell_on(),
         "config": s.config_path.as_ref().map(|p| p.display().to_string()),
         "data_dir": s.data_dir.display().to_string(),
@@ -2418,6 +2675,15 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/term", get(term_ws))
         .route("/api/term/check", get(term_check))
         .route("/api/overview", get(overview))
+        .route("/api/session", get(session_get))
+        .route("/api/session/password", axum::routing::put(own_password))
+        .route("/api/login", post(login))
+        .route("/api/logout", post(logout))
+        .route("/api/users", get(users_list).post(user_add))
+        .route(
+            "/api/users/{name}",
+            axum::routing::patch(user_update).delete(user_remove),
+        )
         .route("/api/config", get(config_get).put(config_put))
         .route("/api/config/check", post(config_check))
         .route("/api/board", get(board_get))
@@ -5357,6 +5623,226 @@ while True:
         assert_eq!(v["env"], json!([]));
         let (st, _, _) = call(&app, "GET", &check("profile=nobody"), &[AUTH], None).await;
         assert_eq!(st, StatusCode::BAD_REQUEST);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn users_roles_and_sessions() {
+        let (app, dir) = fixture("users", false);
+        let token_cookie = format!("{}={}", COOKIE, TOKEN);
+        // No users: the token (cookie or Bearer) is the key, as before.
+        let (_, _, b) = call(&app, "GET", "/api/session", &[], None).await;
+        assert_eq!(serde_json::from_str::<Value>(&b).unwrap()["users"], false);
+        assert_eq!(
+            call(
+                &app,
+                "GET",
+                "/api/procs",
+                &[("cookie", token_cookie.as_str())],
+                None
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        // The token holder adds the first user, who is always an admin.
+        let (st, _, b) = call(
+            &app,
+            "POST",
+            "/api/users",
+            &[AUTH],
+            Some(json!({ "name": "alice", "role": "viewer", "password": "alice-pass-1234" })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{}", b);
+        assert_eq!(
+            serde_json::from_str::<Value>(&b).unwrap()[0]["role"],
+            "admin"
+        );
+        // Now the token signs nobody in: not as a cookie, not from a URL. As a
+        // Bearer credential (tools) it is still an admin.
+        assert_eq!(
+            call(
+                &app,
+                "GET",
+                "/api/procs",
+                &[("cookie", token_cookie.as_str())],
+                None
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+        let (st, h, _) = call(&app, "GET", &format!("/?token={}", TOKEN), &[], None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(h.get(header::SET_COOKIE).is_none());
+        assert_eq!(
+            call(&app, "GET", "/api/users", &[AUTH], None).await.0,
+            StatusCode::OK
+        );
+
+        async fn login(app: &Arc<App>, name: &str, pw: &str) -> (StatusCode, String) {
+            let (st, h, b) = call(
+                app,
+                "POST",
+                "/api/login",
+                &[],
+                Some(json!({ "name": name, "password": pw })),
+            )
+            .await;
+            let c = h
+                .get(header::SET_COOKIE)
+                .map(|v| v.to_str().unwrap().split(';').next().unwrap().to_string())
+                .unwrap_or(b);
+            (st, c)
+        }
+        let (st, _) = login(&app, "alice", "wrong-password-x").await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED);
+        let (st, alice) = login(&app, "alice", "alice-pass-1234").await;
+        assert_eq!(st, StatusCode::OK, "{}", alice);
+        assert!(alice.starts_with("indra_session="));
+        let a = [("cookie", alice.as_str())];
+        for (n, r) in [("bob", "operator"), ("carol", "viewer")] {
+            let (st, _, b) = call(
+                &app,
+                "POST",
+                "/api/users",
+                &a,
+                Some(json!({ "name": n, "role": r, "password": format!("{}-pass-1234", n) })),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "{}", b);
+        }
+        let (_, bob) = login(&app, "bob", "bob-pass-1234").await;
+        let (_, carol) = login(&app, "carol", "carol-pass-1234").await;
+        let (b_, c_) = ([("cookie", bob.as_str())], [("cookie", carol.as_str())]);
+
+        // A viewer reads, and the console shows them read-only.
+        assert_eq!(
+            call(&app, "GET", "/api/procs", &c_, None).await.0,
+            StatusCode::OK
+        );
+        let (_, _, ov) = call(&app, "GET", "/api/overview", &c_, None).await;
+        let ov: Value = serde_json::from_str(&ov).unwrap();
+        assert_eq!(
+            (
+                ov["user"].as_str(),
+                ov["role"].as_str(),
+                ov["read_only"].as_bool()
+            ),
+            (Some("carol"), Some("viewer"), Some(true))
+        );
+        for (m, u) in [
+            ("POST", "/api/procs"),
+            ("POST", "/api/workflows"),
+            ("GET", "/api/config"),
+            ("GET", "/api/secrets"),
+            ("GET", "/api/users"),
+            ("GET", "/api/term/check?what=shell"),
+        ] {
+            let (st, _, b) = call(&app, m, u, &c_, Some(json!({}))).await;
+            assert_eq!(st, StatusCode::FORBIDDEN, "viewer {} {}: {}", m, u, b);
+        }
+        // An operator runs things but cannot change settings, secrets, users or prompts.
+        let (st, _, b) = call(
+            &app,
+            "POST",
+            "/api/workflows",
+            &b_,
+            Some(json!({ "name": "nope" })),
+        )
+        .await;
+        assert_eq!(
+            st,
+            StatusCode::BAD_REQUEST,
+            "an operator gets past the role check: {}",
+            b
+        );
+        for (m, u) in [
+            ("GET", "/api/config"),
+            ("PUT", "/api/secrets/x"),
+            ("POST", "/api/users"),
+            ("PUT", "/api/def"),
+            ("POST", "/api/market/install"),
+        ] {
+            let (st, _, _) = call(&app, m, u, &b_, Some(json!({}))).await;
+            assert_eq!(st, StatusCode::FORBIDDEN, "operator {} {}", m, u);
+        }
+        // Anyone signed in may change their own password (asked for the current one).
+        let (st, _, _) = call(
+            &app,
+            "PUT",
+            "/api/session/password",
+            &c_,
+            Some(json!({ "current": "nope-nope-nope", "new": "carol-new-pass-99" })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        let (st, _, b) = call(
+            &app,
+            "PUT",
+            "/api/session/password",
+            &c_,
+            Some(json!({ "current": "carol-pass-1234", "new": "carol-new-pass-99" })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{}", b);
+        assert_eq!(
+            call(&app, "GET", "/api/procs", &c_, None).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        // Admins manage roles; the last admin cannot be demoted.
+        let (st, _, _) = call(
+            &app,
+            "PATCH",
+            "/api/users/alice",
+            &a,
+            Some(json!({ "role": "viewer" })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+        let (st, _, _) = call(
+            &app,
+            "PATCH",
+            "/api/users/bob",
+            &a,
+            Some(json!({ "role": "viewer" })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/api/workflows",
+                &b_,
+                Some(json!({ "name": "nope" }))
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+        // Signing out ends the session.
+        let (st, h, _) = call(&app, "POST", "/api/logout", &a, Some(json!({}))).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(h[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0"));
+        assert_eq!(
+            call(&app, "GET", "/api/procs", &a, None).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        // Every change is in the audit log, with who made it.
+        let log = std::fs::read_to_string(dir.join("data/logs/audit.jsonl")).unwrap();
+        assert!(
+            log.contains("\"user\":\"alice\"")
+                && log.contains("\"user\":\"token\"")
+                && log.contains("\"path\":\"/api/users/bob\""),
+            "{}",
+            log
+        );
+        assert!(!log.contains("pass-1234"), "no passwords in the log");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

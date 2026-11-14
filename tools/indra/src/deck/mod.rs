@@ -21,5 +21,6 @@ pub mod secrets;
 pub mod term;
 pub mod tools;
 pub mod trackers;
+pub mod users;
 pub mod web;
 pub mod workflows;
