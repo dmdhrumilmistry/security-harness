@@ -365,3 +365,11 @@ label.rowitem { font-weight: 400; }
 .runactions { max-width: none; }
 .termprof { align-items: center; margin-bottom: 10px; }
 .termprof select { width: auto; max-width: 100%; }
+
+/* The icons shell prompts draw (Powerlevel10k, Starship, oh-my-posh): Nerd
+   Fonts' symbols, used only for the characters the text font lacks. */
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  src: url("/vendor/symbols-nerd-font-mono.woff2") format("woff2");
+  font-display: block;
+}
