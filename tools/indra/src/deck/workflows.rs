@@ -115,15 +115,46 @@ impl Engine {
     }
 
     /// Start a workflow defined in the config, by name.
-    pub fn start_named(self: &Arc<Self>, name: &str) -> Result<u64, String> {
-        let wf = self
-            .settings
-            .get()
+    /// Start a configured (or built-in) workflow with its inputs filled in.
+    pub fn start_with_inputs(
+        self: &Arc<Self>,
+        name: &str,
+        given: &std::collections::BTreeMap<String, String>,
+    ) -> Result<u64, String> {
+        let settings = self.settings.get();
+        let wf = settings
             .workflows
             .iter()
             .find(|w| w.name == name)
             .cloned()
             .ok_or_else(|| format!("no workflow named '{}'", name))?;
+        if wf.inputs.is_empty() {
+            if !given.is_empty() {
+                return Err(format!("workflow '{}' takes no inputs", name));
+            }
+            return self.start(wf);
+        }
+        let harness = wf
+            .harness
+            .as_deref()
+            .and_then(|n| settings.harnesses.iter().find(|h| h.name == n))
+            .or_else(|| settings.harnesses.first());
+        let targets = harness.map(|h| h.targets.clone()).unwrap_or_default();
+        let profiles: Vec<String> = settings.profiles.iter().map(|p| p.name.clone()).collect();
+        let mut wf = config::apply_inputs(&wf, given, &targets, &profiles)?;
+        // A local target from a text input is relative to the config file.
+        let base = settings
+            .config_path
+            .as_deref()
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        for t in &mut wf.tasks {
+            if t.node == LOCAL && !std::path::Path::new(&t.target).is_absolute() {
+                t.target = base.join(&t.target).display().to_string();
+            }
+        }
         self.start(wf)
     }
 
@@ -418,6 +449,8 @@ pub fn fan_out(runner: &str, prompt: &str, targets: &[(String, String)]) -> Work
         })
         .collect();
     WorkflowCfg {
+        inputs: vec![],
+        builtin: false,
         name: "fan-out".into(),
         description: "Ad-hoc fan-out".into(),
         harness: None,
@@ -450,6 +483,8 @@ mod tests {
 
     fn wf(tasks: Vec<TaskCfg>) -> WorkflowCfg {
         WorkflowCfg {
+            inputs: vec![],
+            builtin: false,
             name: "w".into(),
             description: String::new(),
             harness: None,

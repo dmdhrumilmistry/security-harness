@@ -781,38 +781,78 @@
 
   function segs(stages) { return h("div", { class: "segs", title: stages.map(function (s) { return s.name + ": " + s.state; }).join(", ") }, stages.map(function (s) { return h("i", { class: s.state }); })); }
 
-  // Start /sh-pr-review on a pull request, from the Runs page.
-  function prReviewForm(hs) {
-    if (S.ov.read_only || !hs || !hs.targets.length) return null;
-    var pr = h("input", { type: "text", placeholder: "https://github.com/owner/repo/pull/123, or 123", "aria-label": "Pull request" });
-    var target = h("select", { "aria-label": "Checkout" }, hs.targets.map(function (t, i) { return h("option", { value: String(i), text: t }); }));
-    var profile = h("select", { "aria-label": "Profile" }, h("option", { value: "", text: "None (runner defaults)" }),
-      (S.ov.profiles || []).map(function (p) { return h("option", { value: p.name, text: p.name + (p.description ? "  -  " + p.description : "") }); }));
-    var tier = h("select", { "aria-label": "Tier" }, [["", "from the diff"], ["0", "0: triage only"], ["1", "1: targeted"], ["2", "2: standard"], ["3", "3: full"]].map(function (x) { return h("option", { value: x[0], text: x[1] }); }));
-    var failOn = h("select", { "aria-label": "Fail on" }, [["", "default"], ["critical", "critical"], ["high", "high"], ["medium", "medium"], ["low", "low"]].map(function (x) { return h("option", { value: x[0], text: x[1] }); }));
-    var deep = h("input", { type: "checkbox" }), dry = h("input", { type: "checkbox", checked: true });
-    var go = h("button", { type: "submit", class: "primary" }, "Start the review");
-    var form = h("form", { class: "form", onsubmit: function (e) {
+  // A workflow's inputs as a form; `done(run)` gets the started run.
+  function workflowForm(d, done) {
+    var ro = S.ov.read_only, ins = d.input || [];
+    var hs = (S.ov.harnesses || []).find(function (x) { return x.name === d.harness; }) || harness();
+    var ctl = ins.map(function (i) {
+      var kind = i.kind || "text", el, label = i.label || i.name;
+      if (kind === "choice") {
+        el = h("select", { "aria-label": label }, (i.options || []).map(function (o) { return h("option", { value: o.value, text: o.label }); }));
+        if (i.default != null) el.value = i.default;
+      } else if (kind === "bool") {
+        el = h("input", { type: "checkbox" }); el.checked = /^(true|1|yes|on)$/.test(i.default || "");
+      } else if (kind === "target") {
+        var ts = hs ? hs.targets : [];
+        el = h("select", { "aria-label": label }, (i.required ? [] : [h("option", { value: "", text: "none" })]).concat(ts.map(function (t) { return h("option", { value: t, text: t }); })));
+      } else if (kind === "profile") {
+        el = h("select", { "aria-label": label }, [h("option", { value: "", text: "none (the runner's defaults)" })].concat((S.ov.profiles || []).map(function (p) {
+          return h("option", { value: p.name, text: p.name + (p.provider === "ollama" ? "  (Ollama: " + (p.model || "?") + ")" : p.description ? "  -  " + p.description : "") });
+        })));
+      } else {
+        el = h("input", { type: "text", placeholder: i.placeholder || "", "aria-label": label });
+        if (i.default) el.value = i.default;
+        if (i.required) el.required = true;
+      }
+      var field = kind === "bool" ? h("label", { class: "check" }, el, h("span", { text: label }))
+        : h("label", null, label + (i.required ? " *" : ""), i.help ? h("small", { text: i.help }) : null, el);
+      return { i: i, kind: kind, el: el, field: field };
+    });
+    var go = h("button", { type: "submit", class: "primary", disabled: ro }, "Run " + d.name);
+    var form = h("form", { class: "form wfrun", onsubmit: function (e) {
       e.preventDefault(); go.disabled = true;
-      var body = { h: hs.name, pr: pr.value.trim(), target: Number(target.value), profile: profile.value || null, deep: deep.checked, dry_run: dry.checked };
-      if (tier.value) body.tier = Number(tier.value);
-      if (failOn.value) body.fail_on = failOn.value;
-      api("/api/pr-review", { method: "POST", body: body }).then(function (r) { toast("Started: " + r.prompt); location.hash = "#/proc/" + r.id; })
-        .catch(function (err) { toast(err.message, true); go.disabled = false; });
-    } },
-      h("div", { class: "fields" }, h("label", { class: "wide" }, "Pull request", pr), h("label", null, "Checkout", h("small", { text: "A clone of the PR's repository" }), target)),
-      h("div", { class: "fields" }, h("label", null, "Profile", profile), h("label", null, "Depth", tier), h("label", null, "Fail on", failOn)),
-      h("label", { class: "check" }, deep, h("span", { text: "Deep: every changed file, not just the risky ones" })),
-      h("label", { class: "check" }, dry, h("span", { text: "Dry run: post nothing; post from the run's page when you have read it" })),
-      h("div", { class: "row" }, go));
-    return h("details", { class: "card prreview" }, h("summary", { text: "Review a pull request" }),
-      h("p", { class: "muted small", text: "Runs /sh-pr-review in the checkout with the profile you pick (any runner and model, a local one included). The run appears below; triage its findings, compare it with an earlier review, then post it." }), form);
+      var inputs = {};
+      ctl.forEach(function (c) { inputs[c.i.name] = c.kind === "bool" ? String(c.el.checked) : c.el.value; });
+      api("/api/workflows", { method: "POST", body: { name: d.name, inputs: inputs } }).then(function (r) {
+        toast("Started " + d.name); if (done) done(r); else location.hash = "#/workflow/" + r.id;
+      }).catch(function (err) { toast(err.message, true); go.disabled = false; });
+    } });
+    var plain = ctl.filter(function (c) { return c.kind !== "bool"; }), checks = ctl.filter(function (c) { return c.kind === "bool"; });
+    for (var k = 0; k < plain.length; k += 3) form.appendChild(h("div", { class: "fields" }, plain.slice(k, k + 3).map(function (c) { return c.field; })));
+    checks.forEach(function (c) { form.appendChild(c.field); });
+    if (ro) form.appendChild(h("p", { class: "muted small", text: "indra is running read-only." }));
+    form.appendChild(h("div", { class: "row" }, go));
+    return form;
+  }
+
+  // Runs page: run any workflow, its inputs filled in here.
+  function runWorkflowCard() {
+    if (S.ov.read_only) return null;
+    var box = h("div"), sel = h("select", { "aria-label": "Workflow" }), body = h("div");
+    var card = h("details", { class: "card prreview", open: true }, h("summary", { text: "Run a workflow" }),
+      h("p", { class: "muted small", text: "A pull request review, a full security review, or any workflow from Settings > Workflows. Each runs with the profile you pick (any runner and model, a local one included); its run appears below." }),
+      h("div", { class: "row" }, sel), body);
+    api("/api/workflows").then(function (w) {
+      var defs = w.defs || [];
+      if (!defs.length) { box.remove(); return; }
+      defs.forEach(function (d) { sel.appendChild(h("option", { value: d.name, text: d.name + (d.description ? "  -  " + d.description : "") })); });
+      var start = defs.find(function (d) { return d.name === "pr-review"; }) || defs[0];
+      sel.value = start.name;
+      function show() {
+        var d = defs.find(function (x) { return x.name === sel.value; });
+        body.textContent = "";
+        body.appendChild(workflowForm(d));
+      }
+      sel.addEventListener("change", show); show();
+      box.appendChild(card);
+    }).catch(function () { box.remove(); });
+    return box;
   }
 
   function pageRuns(m) {
     var hs = harness();
     m.appendChild(header("Runs", hs && hs.has_runs ? "Run directories under " + hs.targets.join(", ") + ". Refreshes every 3 seconds." : "This harness does not define a runs directory."));
-    var prf = prReviewForm(hs); if (prf) m.appendChild(prf);
+    var rwc = runWorkflowCard(); if (rwc) m.appendChild(rwc);
     var holder = h("div", { class: "tablewrap" });
     m.appendChild(holder);
     function load() {
@@ -1411,6 +1451,7 @@
     m.appendChild(header("Workflows", "Multi-step agent work across nodes: tasks run in dependency order, within each node's capacity, with retries. Run them here or with `indra run <name>`.",
       [canEdit() ? h("a", { class: "btn", href: "#/wfedit/", text: "New workflow" }) : null]));
     var runsBox = h("div"), defsBox = h("div", { class: "grid" });
+    var defsSig = null;
     m.appendChild(h("h2", { text: "Runs" })); m.appendChild(runsBox);
     m.appendChild(h("h2", { text: "Configured workflows" })); m.appendChild(defsBox);
     function loadRuns() {
@@ -1427,22 +1468,30 @@
               h("td", null, h("div", { class: "segs" }, r.tasks.map(function (t) { return h("i", { class: t.state === "succeeded" ? "done" : t.state === "running" ? "running" : "", title: t.id + ": " + t.state }); })), h("span", { class: "muted", text: " " + done + "/" + r.tasks.length })),
               h("td", { class: "muted", text: ago(r.started) }));
           })))));
+        // Redrawn only when they change, so an open Run form survives the refresh.
+        var sig = JSON.stringify(w.defs);
+        if (sig === defsSig) return;
+        defsSig = sig;
         defsBox.textContent = "";
         if (!w.defs.length) defsBox.appendChild(h("div", { class: "card" }, h("h4", { text: "No workflows configured" }),
           h("p", { class: "muted", text: "Chain agent tasks across machines, in dependency order. Or use a fan-out below." }),
           canEdit() ? h("a", { class: "btn", href: "#/wfedit/", text: "Create a workflow" }) : null));
         w.defs.forEach(function (d) {
+          var formBox = h("div");
           defsBox.appendChild(h("div", { class: "card" },
             h("div", { class: "row" }, h("h4", { text: d.name }), h("span", { class: "pill", text: d.task.length + " tasks" })),
             d.description ? h("p", { class: "muted", text: d.description }) : null,
             h("ul", { class: "links" }, d.task.map(function (t) {
               return h("li", null, h("b", { text: t.id }), h("span", { class: "muted", text: "  on " + t.node + ((t.needs || []).length ? ", after " + t.needs.join(", ") : "") }));
             })),
+            (d.input || []).length ? h("p", { class: "muted small", text: "Inputs: " + d.input.map(function (i) { return (i.label || i.name) + (i.required ? " *" : ""); }).join(", ") }) : null,
             h("div", { class: "row" }, h("button", { class: "primary", type: "button", disabled: ov.read_only, onclick: function (e) {
+              // With inputs: ask for them; without: run it.
+              if ((d.input || []).length) { formBox.textContent = ""; formBox.appendChild(workflowForm(d)); return; }
               e.target.disabled = true;
               api("/api/workflows", { method: "POST", body: { name: d.name } }).then(function (r) { location.hash = "#/workflow/" + r.id; })
                 .catch(function (err) { toast(err.message, true); e.target.disabled = false; });
-            } }, "Run"), canEdit() ? h("a", { href: "#/wfedit/" + encodeURIComponent(d.name), text: "Edit graph" }) : null)));
+            } }, "Run"), canEdit() && !d.builtin ? h("a", { href: "#/wfedit/" + encodeURIComponent(d.name), text: "Edit graph" }) : null), formBox));
         });
       }).catch(function (e) { runsBox.textContent = e.message; });
     }
