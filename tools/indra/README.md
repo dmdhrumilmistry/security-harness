@@ -664,8 +664,17 @@ interactive session in one of the harness's targets, or an agent's own session. 
 runs the agent's runner with its `resume_args` (`claude --resume <session>`) in the agent's
 directory; while the agent still runs it adds `fork_args` (`--fork-session`), so you explore a
 branch and the agent carries on undisturbed. Process pages get an **Open in terminal** (or
-**Fork in terminal**) button. Agent sessions open for agents on this machine only. Closing the
-tab hangs up the terminal and ends what it started.
+**Fork in terminal**) button. Agent sessions open for agents on this machine only.
+
+Terminals open as tabs in one **terminals** browser tab: each has its own tab with a status dot,
+its number and a **×** to close it, and **+ New** opens a shell or Claude Code (with a profile)
+in any target. While that page is open, the console's buttons add a tab to it instead of opening
+another window. Keys: Ctrl+Shift+T new, Ctrl+Shift+W close, Ctrl+Shift+PageUp/PageDown switch.
+A terminal whose program exits keeps its tab (and its output) with **Start again**. The
+Terminal page lists **Running terminals** on this machine, from any browser, with who opened
+each and a **Close** button. Closing a terminal, by its **×**, from the list, or by closing
+the page, hangs it up and ends what it started, background jobs included
+(`GET /api/term/sessions`, `POST /api/term/sessions/{id}/close`, admin only).
 
 ## Nodes and orchestration
 

@@ -67,6 +67,11 @@ their section; nothing is deleted, items are checked off with the change that di
       Runs has **Run a workflow** instead of a PR-only form; `indra run NAME --input k=v`
 - [x] Users and roles (RBAC) for the console instead of an access token in the URL: sign-in,
       viewer/operator/admin checked on every call, Settings > Users, `indra user`, audit log
+- [x] Manage terminals: tabs in one terminals page (+ New, a close button per tab, Start again,
+      keyboard shortcuts), console buttons add tabs to an open page, and **Running terminals** on
+      the Terminal page with Close (ends background jobs too)
+- [x] Cut `indra-v0.3.0` so `indra update` brings the icon fix, workflow inputs, users and
+      terminal tabs to installs of 0.2.0
 
 ## Not planned yet (the docs say so)
 

@@ -2491,6 +2491,7 @@ async fn term_check(State(app): State<Arc<App>>, Query(q): Query<TermQ>) -> ApiR
 async fn term_ws(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
+    me: Option<axum::Extension<crate::deck::users::Who>>,
     Query(q): Query<TermQ>,
     ws: axum::extract::ws::WebSocketUpgrade,
 ) -> Response {
@@ -2519,7 +2520,21 @@ async fn term_ws(
         .into_response();
     }
     crate::deck::term::audit(&app.settings().data_dir.join("logs"), &spec);
-    ws.on_upgrade(move |socket| crate::deck::term::bridge(spec, socket))
+    let user = me.map(|m| m.0.user).unwrap_or_else(|| "token".into());
+    ws.on_upgrade(move |socket| crate::deck::term::bridge(spec, user, socket))
+}
+
+/// The terminals open now, on this machine.
+async fn term_sessions() -> Json<Value> {
+    Json(json!(crate::deck::term::sessions()))
+}
+
+/// End one of them (its program and what it started).
+async fn term_close(UrlPath(id): UrlPath<u64>) -> ApiResult<Json<Value>> {
+    if !crate::deck::term::close(id) {
+        return Err(not_found("no terminal with that id (it may have ended)"));
+    }
+    Ok(Json(json!({ "closed": id })))
 }
 
 pub fn router(app: Arc<App>) -> Router {
@@ -2674,6 +2689,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/delegations/{id}/cancel", post(delegation_cancel))
         .route("/api/term", get(term_ws))
         .route("/api/term/check", get(term_check))
+        .route("/api/term/sessions", get(term_sessions))
+        .route("/api/term/sessions/{id}/close", post(term_close))
         .route("/api/overview", get(overview))
         .route("/api/session", get(session_get))
         .route("/api/session/password", axum::routing::put(own_password))
@@ -4504,6 +4521,112 @@ while True:
         assert!(seen.contains("ended"), "got: {}", seen);
         let log = std::fs::read_to_string(dir.join("data/logs/terminal.log")).unwrap();
         assert!(log.contains("\"what\":\"shell in "));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn open_terminals_are_listed_and_closed_from_the_console() {
+        use futures_util::SinkExt;
+        use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as WsMsg};
+        let (app, dir) = fixture("ptylist", false);
+        app.shell.store(true, std::sync::atomic::Ordering::SeqCst);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let served = router(app.clone());
+        tokio::spawn(async move { axum::serve(listener, served).await });
+        let mut r = format!("ws://{}/api/term?what=shell&target=0", addr)
+            .into_client_request()
+            .unwrap();
+        r.headers_mut()
+            .insert("origin", format!("http://{}", addr).parse().unwrap());
+        r.headers_mut()
+            .insert("authorization", AUTH.1.parse().unwrap());
+        let (mut ws, _) = tokio_tungstenite::connect_async(r).await.unwrap();
+        // The first frame names the terminal.
+        let id = match tokio::time::timeout(std::time::Duration::from_secs(10), ws.next()).await {
+            Ok(Some(Ok(WsMsg::Text(t)))) => {
+                let v: Value = serde_json::from_str(t.as_str()).unwrap();
+                assert_eq!(v["t"], "session");
+                assert!(v["label"].as_str().unwrap().starts_with("shell in "));
+                v["id"].as_u64().unwrap()
+            }
+            _ => panic!("no session frame"),
+        };
+        let origin = ("origin", "http://127.0.0.1:7878");
+        let (st, _, body) = call(&app, "GET", "/api/term/sessions", &[AUTH], None).await;
+        assert_eq!(st, StatusCode::OK);
+        let list: Value = serde_json::from_str(&body).unwrap();
+        let mine = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == id)
+            .expect("listed");
+        assert_eq!(mine["user"], "token");
+        assert!(mine["cwd"].as_str().unwrap().ends_with("target"));
+        // Start something in it that would outlive a careless close.
+        ws.send(WsMsg::Binary(b"sleep 300 & echo bg-$!\n".to_vec().into()))
+            .await
+            .unwrap();
+        // The job's pid, once the shell has printed it.
+        let pid = |seen: &str| -> Option<i32> {
+            seen.split("bg-").skip(1).find_map(|x| {
+                let d: String = x.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if !d.is_empty() && x[d.len()..].starts_with(['\r', '\n']) {
+                    d.parse().ok()
+                } else {
+                    None
+                }
+            })
+        };
+        let mut seen = String::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let bg = loop {
+            if let Some(p) = pid(&seen) {
+                break p;
+            }
+            assert!(std::time::Instant::now() < deadline, "got: {}", seen);
+            match tokio::time::timeout(std::time::Duration::from_secs(5), ws.next()).await {
+                Ok(Some(Ok(WsMsg::Binary(b)))) => seen.push_str(&String::from_utf8_lossy(&b)),
+                Ok(Some(Ok(_))) => {}
+                _ => panic!("closed early; got: {}", seen),
+            }
+        };
+        // Close it from the console.
+        let close = format!("/api/term/sessions/{}/close", id);
+        let (st, _, _) = call(&app, "POST", &close, &[AUTH, origin], None).await;
+        assert_eq!(st, StatusCode::OK);
+        // The page sees it end, and it leaves the list.
+        let mut ended = false;
+        while std::time::Instant::now() < deadline {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), ws.next()).await {
+                Ok(Some(Ok(WsMsg::Binary(b)))) => {
+                    if String::from_utf8_lossy(&b).contains("ended") {
+                        ended = true;
+                    }
+                }
+                Ok(Some(Ok(_))) => {}
+                _ => break,
+            }
+        }
+        assert!(ended);
+        let (_, _, body) = call(&app, "GET", "/api/term/sessions", &[AUTH], None).await;
+        let list: Value = serde_json::from_str(&body).unwrap();
+        assert!(!list.as_array().unwrap().iter().any(|x| x["id"] == id));
+        // What it started in the background went with it.
+        let mut gone = false;
+        for _ in 0..40 {
+            if unsafe { libc::kill(bg, 0) } != 0 {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(gone, "background job {} survived the close", bg);
+        // Closing it again: it is gone.
+        let (st, _, _) = call(&app, "POST", &close, &[AUTH, origin], None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
         let _ = std::fs::remove_dir_all(dir);
     }
 
