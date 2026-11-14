@@ -49,6 +49,15 @@ their section; nothing is deleted, items are checked off with the change that di
       now copies a run to the hub (over SSH or the link) and opens the copy
 - [x] tools/indra/README.md Settings table lists 7 of the 13 tabs
 
+## Install and release
+
+- [x] One-line installers: `install.sh` (Linux, macOS) and `install.ps1` (Windows), checking SHA-256
+- [x] `indra update` (and `--check`): the binary updates itself, checking SHA-256
+- [x] Release workflow: tag must match the crate version; `SHA256SUMS` and the install scripts on
+      each release; install instructions in the release notes
+- [x] Docs lead with the one-liners; the console's Add a machine shows install, then connect
+- [ ] Cut the first binary release (`indra-v0.2.0`) and try the one-liners against it
+
 ## Not planned yet (the docs say so)
 
 - [ ] OS keychain backend for secrets

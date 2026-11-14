@@ -78,6 +78,12 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
           rustup default stable
+      - name: The tag matches the crate version
+        run: |
+          want="indra-v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml ($want)"; exit 1
+          fi
       - name: musl tools
         if: matrix.musl
         run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
@@ -98,7 +104,50 @@ jobs:
         run: |
           # Every matrix job races to create the release; losing that race is fine.
           export GH_REPO="$GITHUB_REPOSITORY"
+          notes="One file, nothing else to install.
+
+          Linux and macOS:
+
+              curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.sh | sh
+
+          Windows (PowerShell):
+
+              irm https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.ps1 | iex
+
+          Then: \`indra serve --open\`. Already installed? \`indra update\`.
+
+          Or download the file for your machine below; each has a .sha256, and SHA256SUMS lists them all."
           gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --notes "indra prebuilt binaries. See tools/indra/README.md." \
+            || gh release create "$TAG" --title "$TAG" --notes "$notes" --latest=false \
             || gh release view "$TAG" >/dev/null
           gh release upload "$TAG" "$NAME" "$NAME.sha256" --clobber
+
+  # After every build: one SHA256SUMS for all of them, and the install
+  # scripts, so a pinned version installs the same way.
+  checksums:
+    name: checksums
+    if: startsWith(github.ref, 'refs/tags/indra-v')
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: SHA256SUMS and the install scripts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          export GH_REPO="$GITHUB_REPOSITORY"
+          mkdir -p dist && cd dist
+          gh release download "$TAG" --pattern 'indra-*' --skip-existing
+          rm -f ./*.sha256
+          sha256sum indra-* > SHA256SUMS
+          cat SHA256SUMS
+          cp ../install.sh ../install.ps1 .
+          gh release upload "$TAG" SHA256SUMS install.sh install.ps1 --clobber

@@ -12,6 +12,7 @@ mod publish;
 mod review;
 mod site;
 mod skills;
+mod update;
 
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
@@ -27,7 +28,11 @@ use std::process::ExitCode;
         indra ls      the console's picture in the terminal\n\
         indra nodes   the machines agents run on, local and over SSH\n\
         indra run     run a multi-step, multi-node workflow and follow it\n\n\
-        The security harness is the default profile; any Claude Code project or custom harness works too."
+        The security harness is the default profile; any Claude Code project or custom harness works too.",
+    after_help = "Start here:\n  \
+        indra serve --open           open the console in your browser\n  \
+        indra claude -m qwen3-coder  Claude Code on a local model (Ollama)\n  \
+        indra update                 get the newest version"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -74,6 +79,8 @@ enum Cmd {
     Review(review::ReviewArgs),
     /// Sync the skill mirror, or install the skills for an agent
     Skills(skills::SkillsArgs),
+    /// Update indra to the newest release (checks its SHA-256 first)
+    Update(update::UpdateArgs),
     /// Maintainer tools: build the website
     #[command(hide = true)]
     Dev {
@@ -111,6 +118,7 @@ fn main() -> ExitCode {
         Cmd::Agents(a) => deck::cli::run_agents(a),
         Cmd::Attach(a) => deck::cli::run_attach(a),
         Cmd::Claude(a) => deck::claude::run(a),
+        Cmd::Update(a) => update::run(a),
         Cmd::Publish(a) => publish::run(a),
         Cmd::Review(a) => review::run(a),
         Cmd::Skills(a) => skills::run(a),

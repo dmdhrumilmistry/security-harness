@@ -153,3 +153,18 @@ make some of these unnecessary.
    `.claude-plugin/marketplace.json`, and `gemini-extension.json`
 3. No em dashes: `indra dev dashes`
 4. Tag and release with the same version as the manifests
+
+### The indra binary
+
+The CLI is released on its own tags, `indra-v<version>`, separate from the plugin's `v<version>`:
+
+1. Set `version` in `tools/indra/Cargo.toml` (CI refuses a tag that does not match it).
+2. Merge, then tag `main`: `git tag indra-v0.2.0 && git push origin indra-v0.2.0`.
+3. CI tests on Linux, macOS and Windows, builds the five binaries (Linux x86_64 and arm64
+   static, macOS Apple silicon and Intel, Windows x86_64), uploads each with its `.sha256`, then
+   adds `SHA256SUMS`, `install.sh` and `install.ps1` to the release. It is not marked "latest",
+   so the plugin's releases keep that spot; the installers and `indra update` look for the
+   newest `indra-v*` release themselves.
+4. Check the one-liners against it:
+   `curl -fsSL https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.sh | sh`
+   and, on Windows, `irm https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.ps1 | iex`.

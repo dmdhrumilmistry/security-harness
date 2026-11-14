@@ -1333,7 +1333,9 @@
         var t = targets.value.split("\n").map(function (x) { return x.trim(); }).filter(Boolean);
         api("/api/nodes/enrol", { method: "POST", body: { name: name.value.trim(), targets: t } }).then(function (r) {
           out.textContent = "";
-          out.appendChild(h("p", { text: "On that machine, with indra installed, run (the code works once, for 15 minutes):" }));
+          out.appendChild(h("p", null, h("b", { text: "1. " }), "Install indra on that machine (skip if it has it):"));
+          out.appendChild(h("pre", { class: "view", text: "# Linux or macOS\ncurl -fsSL https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.sh | sh\n\n# Windows (PowerShell)\nirm https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.ps1 | iex" }));
+          out.appendChild(h("p", null, h("b", { text: "2. " }), "Connect it to this console (the code works once, for 15 minutes):"));
           out.appendChild(h("pre", { class: "view", text: r.command }));
           out.appendChild(h("p", { class: "muted small", text: "It dials out to this hub (no open port, no SSH), keeps the link up and reconnects on its own, and moves to a direct WebRTC channel when it can. Its key is saved on it; later starts need only `indra node connect <hub> --name " + name.value.trim() + "`. Behind a different address or a proxy, use the URL people use to reach this console." }));
           load(true);

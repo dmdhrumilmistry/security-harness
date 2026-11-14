@@ -103,11 +103,14 @@ deterministic parts of the PR review (`indra review cache|metrics|post`) and of 
 with Cargo:
 
 ```
-# Prebuilt: download indra-<target> from the latest `indra-v*` release of
-# https://github.com/dmdhrumilmistry/indra/releases into a directory on PATH
-# (for example ~/.local/bin, or %LOCALAPPDATA%\Programs\indra on Windows).
-cargo install --locked --git https://github.com/dmdhrumilmistry/indra indra   # any OS with Rust
+curl -fsSL https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.sh | sh   # Linux, macOS
+irm https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.ps1 | iex       # Windows (PowerShell)
+cargo install --locked --git https://github.com/dmdhrumilmistry/indra indra               # from source, any OS with Rust
 ```
+
+The installers fetch the newest `indra-v*` release for the machine, check its SHA-256, and put
+it in `~/.local/bin` (or `%LOCALAPPDATA%\Programs\indra`). Once installed, `indra update` keeps it
+current.
 
 If neither works, set `indra:false`: a security review runs without long-term memory, but a PR
 review cannot cache, record metrics or post until it is installed.
