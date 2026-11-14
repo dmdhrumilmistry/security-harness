@@ -1994,6 +1994,54 @@
 
   function termUrl(params) { return "/term?" + new URLSearchParams(params).toString(); }
 
+  // A link that opens a terminal: as a tab in the terminals page when one is
+  // open already (it answers on a BroadcastChannel), else in a new tab.
+  var termBus = window.BroadcastChannel ? new BroadcastChannel("indra-term") : null, termPings = {}, termPingN = 0;
+  if (termBus) termBus.onmessage = function (e) { var m = e.data || {}; if (m.t === "pong" && termPings[m.n]) termPings[m.n](); };
+  function termLink(label, params, cls) {
+    var a = h("a", { class: cls || "btn", href: termUrl(params), target: "_blank", rel: "noopener" }, label);
+    a.termParams = params;
+    a.addEventListener("click", function (e) {
+      if (!termBus || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      var n = ++termPingN, answered = false;
+      termPings[n] = function () {
+        if (answered) return;
+        answered = true; delete termPings[n];
+        termBus.postMessage({ t: "open", params: a.termParams });
+        toast("Opened in your terminals tab");
+      };
+      termBus.postMessage({ t: "ping", n: n });
+      setTimeout(function () { if (!answered) { answered = true; delete termPings[n]; window.open(a.href, "_blank", "noopener"); } }, 250);
+    });
+    return a;
+  }
+
+  // The terminals running on this machine, with Close.
+  function runningTerminals(box) {
+    function draw() {
+      return api("/api/term/sessions").then(function (list) {
+        box.textContent = "";
+        if (!list.length) { box.appendChild(empty("No terminals open.")); return; }
+        box.appendChild(h("div", { class: "rowlist" }, list.map(function (s) {
+          return h("div", { class: "rowitem" }, h("span", { class: "pill ok", text: "#" + s.id }),
+            h("span", { class: "grow clip1", title: s.cwd, text: s.label }),
+            h("span", { class: "muted small", text: (s.user ? s.user + ", " : "") + ago(s.started) }),
+            h("button", { type: "button", class: "danger", onclick: function (e) {
+              if (!window.confirm("Close " + s.label + "? Its program, and anything it started, ends.")) return;
+              e.target.disabled = true;
+              api("/api/term/sessions/" + s.id + "/close", { method: "POST" }).then(function () {
+                if (termBus) termBus.postMessage({ t: "closed", id: s.id });
+                toast("Closed terminal #" + s.id);
+                setTimeout(draw, 300);
+              }).catch(function (x) { e.target.disabled = false; toast(x.message, true); });
+            } }, "Close"));
+        })));
+      }).catch(function (x) { box.textContent = ""; box.appendChild(empty(x.message)); });
+    }
+    draw(); every(3000, draw);
+  }
+
   // Terminal: a real shell in the browser (when `indra serve --shell`), and
   // the terminal client for the user's own terminal.
   function pageTerminal(m) {
@@ -2018,20 +2066,27 @@
     var prof = h("select", { "aria-label": "Claude Code profile" }, h("option", { value: "", text: "no profile (your own Claude Code setup)" }),
       claudeProfiles.map(function (p) { return h("option", { value: p.name, text: p.name + (p.provider === "ollama" ? "  (on Ollama: " + (p.model || "?") + ")" : p.subagent_provider === "ollama" ? "  (subagents on Ollama)" : "") }); }));
     var claudeLinks = [];
-    function claudeHref(at) { return termUrl(Object.assign({ what: "claude" }, at, prof.value ? { profile: prof.value } : {})); }
-    prof.addEventListener("change", function () { claudeLinks.forEach(function (x) { x.a.href = claudeHref(x.at); }); });
+    function claudeAt(at) { return Object.assign({ what: "claude" }, at, prof.value ? { profile: prof.value } : {}); }
+    prof.addEventListener("change", function () { claudeLinks.forEach(function (x) { x.a.termParams = claudeAt(x.at); x.a.href = termUrl(x.a.termParams); }); });
     m.appendChild(h("div", { class: "card" },
       h("h3", { text: "Start a terminal" }),
-      h("p", { class: "muted", text: "Opens in a new tab, in the directory you pick. It ends when you close the tab." }),
+      h("p", { class: "muted", text: "Opens in the terminals tab (one tab, a tab inside it per terminal), in the directory you pick. Close a terminal with its \u00d7, or below." }),
       hasClaude && claudeProfiles.length ? h("div", { class: "row termprof" }, h("span", { class: "muted small", text: "Claude Code with" }), prof,
         h("span", { class: "muted small", text: "A profile on Ollama runs Claude Code on that local model; see the local models guide." })) : null,
       targets.length ? h("div", { class: "rowlist" }, targets.map(function (t, i) {
         var at = hs.targets.length ? { h: hs.name, target: i } : { h: hs.name };
-        var ca = hasClaude ? h("a", { class: "btn", href: claudeHref(at), target: "_blank", rel: "noopener" }, "Claude Code") : null;
+        var ca = hasClaude ? termLink("Claude Code", claudeAt(at)) : null;
         if (ca) claudeLinks.push({ a: ca, at: at });
         return h("div", { class: "rowitem" }, h("code", { class: "grow", text: t }), h("span", { class: "row" },
-          h("a", { class: "btn", href: termUrl(Object.assign({ what: "shell" }, at)), target: "_blank", rel: "noopener" }, "Shell"), ca));
+          termLink("Shell", Object.assign({ what: "shell" }, at)), ca));
       })) : empty("No harness, so no directory to start in.")));
+    var running = h("div");
+    m.appendChild(h("div", { class: "card" },
+      h("h3", { text: "Running terminals" }),
+      h("p", { class: "muted", text: "Every terminal open on this machine, in any browser. Closing one ends its program and anything it started." }),
+      h("div", { class: "row" }, h("a", { class: "btn ghost", href: "/term", target: "_blank", rel: "noopener" }, "Open the terminals tab")),
+      running));
+    runningTerminals(running);
     var sessions = h("div");
     m.appendChild(h("div", { class: "card" },
       h("h3", { text: "Agent sessions" }),
@@ -2043,7 +2098,7 @@
       sessions.appendChild(ok.length ? h("div", { class: "rowlist" }, ok.map(function (p) {
         return h("div", { class: "rowitem" }, h("a", { href: "#/proc/" + p.id, text: "#" + p.id }), statusPill(p.status),
           h("span", { class: "muted grow clip1", text: p.prompt || "" }),
-          h("a", { class: "btn", href: termUrl({ what: "agent", proc: p.id }), target: "_blank", rel: "noopener" }, p.status === "running" ? "Fork in terminal" : "Open in terminal"));
+          termLink(p.status === "running" ? "Fork in terminal" : "Open in terminal", { what: "agent", proc: p.id }));
       })) : empty("No local agent has reported a session yet (Claude Code does)."));
     }).catch(function (e) { sessions.appendChild(empty(e.message)); });
   }
@@ -2207,10 +2262,9 @@
         api("/api/procs/" + id + "/stop", { method: "POST" }).then(function () { toast("Stopping"); }).catch(function (e) { toast(e.message, true); });
       } }, "Stop");
       var shellBtn = S.ov.shell && p.node === "local" && p.session
-        ? h("a", { class: "btn", href: termUrl({ what: "agent", proc: p.id }), target: "_blank", rel: "noopener",
-            title: p.status === "running" ? "Opens a branch of its session (--fork-session), so the agent is not disturbed" : "Continues its session interactively" },
-            p.status === "running" ? "Fork in terminal" : "Open in terminal")
+        ? termLink(p.status === "running" ? "Fork in terminal" : "Open in terminal", { what: "agent", proc: p.id })
         : null;
+      if (shellBtn) shellBtn.title = p.status === "running" ? "Opens a branch of its session (--fork-session), so the agent is not disturbed" : "Continues its session interactively";
       top.appendChild(header("Process #" + p.id + " - " + p.runner + (p.node !== "local" ? " on " + p.node : ""), (p.host && p.node !== "local" ? p.host + ":" : "") + p.cwd, [statusPill(p.status), p.cost_usd != null ? h("span", { class: "pill", text: "$" + p.cost_usd.toFixed(4) }) : null, shellBtn, stop]));
       top.appendChild(h("div", { class: "cmd", text: p.prompt }));
       top.appendChild(lineage);

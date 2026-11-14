@@ -22,6 +22,47 @@ use tokio::sync::mpsc;
 pub const MAX_OPEN: usize = 8;
 pub static OPEN: AtomicUsize = AtomicUsize::new(0);
 
+/// An open terminal, for the list of running terminals and to close one.
+struct Live {
+    label: String,
+    cwd: String,
+    user: String,
+    started: u64,
+    close: Arc<tokio::sync::Notify>,
+}
+
+fn live() -> &'static Mutex<std::collections::BTreeMap<u64, Live>> {
+    static L: std::sync::OnceLock<Mutex<std::collections::BTreeMap<u64, Live>>> =
+        std::sync::OnceLock::new();
+    L.get_or_init(Default::default)
+}
+
+static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The terminals open now: id, what, where, whose, since when.
+pub fn sessions() -> Vec<serde_json::Value> {
+    live()
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, l)| {
+            serde_json::json!({ "id": id, "label": l.label, "cwd": l.cwd, "user": l.user, "started": l.started })
+        })
+        .collect()
+}
+
+/// End a terminal (its program and everything it started). False when no
+/// terminal has that id.
+pub fn close(id: u64) -> bool {
+    match live().lock().unwrap().get(&id) {
+        Some(l) => {
+            l.close.notify_one();
+            true
+        }
+        None => false,
+    }
+}
+
 /// What to start in the terminal.
 pub struct Spec {
     pub program: PathBuf,
@@ -77,18 +118,39 @@ pub fn audit(log_dir: &std::path::Path, spec: &Spec) {
 /// Run `spec` on a PTY and bridge it to the WebSocket until either ends.
 /// Binary frames are keystrokes; a text frame `{"t":"resize","cols":..,"rows":..}`
 /// resizes. The terminal's output goes back as binary frames.
-pub async fn bridge(spec: Spec, socket: axum::extract::ws::WebSocket) {
+pub async fn bridge(spec: Spec, user: String, socket: axum::extract::ws::WebSocket) {
     use axum::extract::ws::Message;
     use futures_util::{SinkExt, StreamExt};
-    struct Slot;
+    struct Slot(u64);
     impl Drop for Slot {
         fn drop(&mut self) {
             OPEN.fetch_sub(1, Ordering::SeqCst);
+            live().lock().unwrap().remove(&self.0);
         }
     }
     OPEN.fetch_add(1, Ordering::SeqCst);
-    let _slot = Slot;
+    let id = NEXT.fetch_add(1, Ordering::SeqCst);
+    let close_me = Arc::new(tokio::sync::Notify::new());
+    live().lock().unwrap().insert(
+        id,
+        Live {
+            label: spec.label.clone(),
+            cwd: spec.cwd.display().to_string(),
+            user,
+            started: crate::deck::runs::now(),
+            close: close_me.clone(),
+        },
+    );
+    let _slot = Slot(id);
     let (mut sink, mut stream) = socket.split();
+    // The page learns which terminal this is (to list and close it).
+    let _ = sink
+        .send(Message::Text(
+            serde_json::json!({ "t": "session", "id": id, "label": spec.label })
+                .to_string()
+                .into(),
+        ))
+        .await;
     let size = PtySize {
         rows: 30,
         cols: 100,
@@ -175,6 +237,8 @@ pub async fn bridge(spec: Spec, socket: axum::extract::ws::WebSocket) {
     let mut ended = None;
     loop {
         tokio::select! {
+            // Closed from the list of running terminals.
+            _ = close_me.notified() => break,
             _ = tick.tick() => {
                 if let Ok(Some(s)) = child.try_wait() {
                     ended = Some(s.exit_code());

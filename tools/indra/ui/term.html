@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>indra terminal</title>
+<title>indra terminals</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/style.css">
@@ -11,12 +11,22 @@
 </head>
 <body class="termpage">
 <header class="termbar">
-  <a class="brand" href="/#/terminal"><img src="/favicon.svg" alt="" width="20" height="20"><span>indra</span></a>
-  <span id="what" class="termwhat"></span>
-  <span id="state" class="pill"></span>
-  <button id="again" type="button" hidden>Start again</button>
+  <a class="brand" href="/#/terminal" title="Back to the console"><img src="/favicon.svg" alt="" width="20" height="20"><span>indra</span></a>
+  <div id="tabs" class="termtabs" role="tablist" aria-label="Terminals"></div>
+  <button id="new" type="button" class="ghost" aria-haspopup="true" aria-expanded="false" title="New terminal">+ New</button>
 </header>
-<div id="term" class="termbox"></div>
+<form id="newform" class="termnew card" hidden>
+  <label>Open <select id="nwhat" aria-label="What to open"><option value="shell">a shell</option><option value="claude">Claude Code</option></select></label>
+  <label>in <select id="ntarget" aria-label="Directory"></select></label>
+  <label id="nprofilebox" hidden>with <select id="nprofile" aria-label="Profile"></select></label>
+  <button type="submit" class="primary">Open</button>
+  <button type="button" id="ncancel" class="ghost">Cancel</button>
+</form>
+<div id="panes" class="termpanes"></div>
+<div id="none" class="termnone" hidden>
+  <p>No terminals open.</p>
+  <button type="button" id="none-new" class="primary">Open a terminal</button>
+</div>
 <script src="/vendor/xterm.js"></script>
 <script src="/vendor/addon-fit.js"></script>
 <script src="/term.js"></script>
