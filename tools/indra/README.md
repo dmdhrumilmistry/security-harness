@@ -6,7 +6,7 @@
 
 
 One small CLI for AI agent harnesses: a **graph memory** your agents (and you) can read and
-write, and a **web console** to view, monitor and run the agents themselves. One ~2.5 MB Rust
+write, and a **web console** to view, monitor and run the agents themselves. One Rust
 binary for Linux, macOS and Windows, with no runtime, database, server or account to set up.
 
 It is named for **Indra's net** (Indrajala): an endless net with a jewel at every knot, each
@@ -28,10 +28,27 @@ picked up automatically, and any other harness is a few lines of TOML.
 
 ## Install
 
-**Prebuilt:** download `indra-<target>` from the latest `indra-v*`
-[release](https://github.com/dmdhrumilmistry/indra/releases), rename it to `indra`
-(`indra.exe` on Windows) and put it on your `PATH`. Builds exist for Linux (x86_64 and arm64,
-static), macOS (Apple silicon and Intel) and Windows (x86_64).
+**One line** (picks the build for your machine, checks its SHA-256, puts it on your `PATH`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.sh | sh   # Linux, macOS
+irm https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.ps1 | iex       # Windows (PowerShell)
+```
+
+Then `indra serve --open`. `indra update` gets the newest release later (`--check` only asks).
+The installers take `INDRA_VERSION=indra-v0.2.0` for a specific release and
+`INDRA_INSTALL_DIR` for another folder (default `~/.local/bin`, or
+`%LOCALAPPDATA%\Programs\indra`).
+
+**Prebuilt, by hand:** download `indra-<target>` from an `indra-v*`
+[release](https://github.com/dmdhrumilmistry/indra/releases) (each file has a `.sha256`, and
+`SHA256SUMS` lists them all), rename it to `indra` (`indra.exe` on Windows) and put it on your
+`PATH`. Builds exist for Linux (x86_64 and arm64, static, any distro), macOS (Apple silicon and
+Intel) and Windows (x86_64).
+
+**One binary for every role.** The console (`indra serve`) and a machine that runs agents for it
+(`indra node connect`, or plain SSH) are the same file, like `gh` or `docker`: one download, one
+version to keep in step, no mismatched pieces.
 
 **From source** (any platform with [Rust](https://rustup.rs) 1.89+):
 
@@ -81,7 +98,7 @@ Obsidian is a fine editor for the same files, and indra is designed to coexist w
 | Retrieval | keyword search | BM25 search + spreading activation over the graph, with explanations |
 | Use from scripts and AI agents | plugins, GUI | a CLI with `--json` on every command |
 | Safe for parallel writers | no | cross-process lock, atomic writes |
-| Footprint | Electron app | one ~2.5 MB binary (memory and console), Linux / macOS / Windows |
+| Footprint | Electron app | one binary (memory and console), Linux / macOS / Windows |
 | Licence | proprietary | MIT |
 
 ### Quick start

@@ -13,6 +13,7 @@
 <p align="center">
   <b><a href="https://dmdhrumilmistry.github.io/indra/">Website</a></b> &nbsp;&middot;&nbsp;
   <b><a href="https://dmdhrumilmistry.github.io/indra/docs/">Docs</a></b> &nbsp;&middot;&nbsp;
+  <a href="#quick-start">Quick start</a> &nbsp;&middot;&nbsp;
   <a href="#install">Install</a> &nbsp;&middot;&nbsp;
   <a href="#usage">Usage</a> &nbsp;&middot;&nbsp;
   <a href="#indra-memory-and-agent-console">Memory &amp; console</a> &nbsp;&middot;&nbsp;
@@ -89,6 +90,39 @@ access-control (IDOR/BOLA/priv-esc) &middot; sqli &middot; xss &middot; ssrf &mi
 auth (session/JWT) &middot; deserialization &middot; path-traversal (LFI/RFI) &middot; secrets &middot; csrf &middot; xxe &middot;
 open-redirect &middot; crypto &middot; race-conditions &middot; file-upload. Dependency CVEs and the SBOM are handled
 by the recon stage.
+
+## Quick start
+
+**1. Get indra** (one file; no Rust, Python or Node needed):
+
+```bash
+# Linux or macOS
+curl -fsSL https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.ps1 | iex
+```
+
+**2. Open the console:**
+
+```bash
+indra serve --open
+```
+
+That's it. The console opens in your browser: launch agents, watch them, read their results.
+
+| I want to... | Run |
+|---|---|
+| Use the console (the "server") | `indra serve --open` |
+| Run agents on another machine too | install there the same way, then paste the line the console shows under **Nodes > Add a machine** |
+| Run Claude Code on a local model (Ollama) | `indra claude -m qwen3-coder --pull` |
+| Get the newest version | `indra update` |
+| Uninstall | delete the `indra` file (`~/.local/bin/indra`, or `%LOCALAPPDATA%\Programs\indra` on Windows) |
+
+It is one program for every role: the same file is the console on your laptop and the agent
+runner on a build box, so there is only ever one thing to install and keep up to date.
 
 ## Install
 
@@ -201,15 +235,16 @@ code-level mitigation.
 
 ## indra: memory and agent console
 
-[`indra`](tools/indra/README.md) is one small Rust CLI (~2.5 MB, Linux / macOS / Windows) that
+[`indra`](tools/indra/README.md) is one Rust program (a single file for Linux / macOS / Windows) that
 ships in this repo. It is named for Indra's net: an endless net with a jewel at every knot, each
 reflecting all the others.
 
 ```bash
-cargo install --locked --git https://github.com/dmdhrumilmistry/indra indra
+curl -fsSL https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.sh | sh   # Linux, macOS
+irm https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.ps1 | iex       # Windows
 ```
 
-or download a binary from an `indra-v*` [release](https://github.com/dmdhrumilmistry/indra/releases).
+(see [Quick start](#quick-start); or build it: `cargo install --locked --git https://github.com/dmdhrumilmistry/indra indra`).
 
 ### Long-term memory (`indra mem`)
 

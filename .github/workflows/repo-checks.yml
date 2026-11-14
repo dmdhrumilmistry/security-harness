@@ -30,3 +30,7 @@ jobs:
         run: tools/indra/target/debug/indra skills sync --check
       - name: No em or en dashes
         run: tools/indra/target/debug/indra dev dashes
+      - name: Install script parses (POSIX sh) and lints
+        run: |
+          sh -n install.sh
+          if command -v shellcheck >/dev/null; then shellcheck -s sh install.sh; fi

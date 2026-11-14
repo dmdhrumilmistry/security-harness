@@ -1,0 +1,102 @@
+#!/bin/sh
+# Install indra: one file, nothing else needed.
+#
+#   curl -fsSL https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.sh | sh
+#
+# It picks the right build for this machine (Linux or macOS, Intel or ARM),
+# checks its SHA-256, puts it in ~/.local/bin (or $INDRA_INSTALL_DIR), and
+# tells you the one command to run next. Run it again to update.
+#
+# Settings (all optional):
+#   INDRA_VERSION=indra-v0.2.0     a specific release instead of the newest
+#   INDRA_INSTALL_DIR=/usr/local/bin   where to put it
+#   INDRA_NO_MODIFY_PATH=1         do not add the folder to your shell's PATH
+#   INDRA_RELEASES_URL=...         another releases API (a mirror, or tests)
+set -eu
+
+REPO="dmdhrumilmistry/indra"
+API="${INDRA_RELEASES_URL:-https://api.github.com/repos/$REPO/releases}"
+DIR="${INDRA_INSTALL_DIR:-$HOME/.local/bin}"
+
+say() { printf '%s\n' "$*"; }
+fail() { printf 'indra install: %s\n' "$*" >&2; exit 1; }
+
+fetch() {
+  # fetch URL OUTFILE
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --retry 3 -H "User-Agent: indra-installer" -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --header "User-Agent: indra-installer" -O "$2" "$1"
+  else
+    fail "needs curl or wget"
+  fi
+}
+
+# Which build: the Linux ones are static (musl), so they run on any distro.
+os=$(uname -s)
+arch=$(uname -m)
+case "$arch" in
+  x86_64|amd64) arch=x86_64 ;;
+  arm64|aarch64) arch=aarch64 ;;
+  *) fail "no prebuilt indra for $arch yet; build it from source: cargo install --git https://github.com/$REPO indra" ;;
+esac
+case "$os" in
+  Linux) target="$arch-unknown-linux-musl" ;;
+  Darwin) target="$arch-apple-darwin" ;;
+  *) fail "this script is for Linux and macOS; on Windows run: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
+esac
+asset="indra-$target"
+
+tmp=$(mktemp -d 2>/dev/null || mktemp -d -t indra)
+trap 'rm -rf "$tmp"' EXIT INT TERM
+
+# Which release: the one asked for, else the newest indra-v* (the repository
+# also has other releases, so "latest" is not enough).
+tag="${INDRA_VERSION:-}"
+if [ -z "$tag" ]; then
+  fetch "$API?per_page=50" "$tmp/releases.json" || fail "cannot reach GitHub to find the newest release"
+  tag=$(tr ',' '\n' < "$tmp/releases.json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(indra-v[^"]*\)".*/\1/p' | head -n 1)
+  [ -n "$tag" ] || fail "no indra release found yet"
+fi
+case "$tag" in indra-v*) ;; *) tag="indra-v$tag" ;; esac
+
+base="${INDRA_DOWNLOAD_URL:-https://github.com/$REPO/releases/download}/$tag"
+say "Installing indra $tag for $target ..."
+fetch "$base/$asset" "$tmp/indra" || fail "download failed: $base/$asset"
+fetch "$base/$asset.sha256" "$tmp/indra.sha256" || fail "checksum download failed"
+
+# Check it is exactly the file that was built.
+want=$(cut -d ' ' -f 1 < "$tmp/indra.sha256")
+if command -v sha256sum >/dev/null 2>&1; then
+  got=$(sha256sum "$tmp/indra" | cut -d ' ' -f 1)
+else
+  got=$(shasum -a 256 "$tmp/indra" | cut -d ' ' -f 1)
+fi
+[ "$want" = "$got" ] || fail "checksum mismatch (expected $want, got $got); nothing was installed"
+
+mkdir -p "$DIR" || fail "cannot create $DIR (set INDRA_INSTALL_DIR to a folder you can write)"
+chmod +x "$tmp/indra"
+mv -f "$tmp/indra" "$DIR/indra" || fail "cannot write $DIR/indra (set INDRA_INSTALL_DIR to a folder you can write)"
+say "Installed $("$DIR/indra" --version 2>/dev/null || echo indra) to $DIR/indra"
+
+# Put it on PATH for new terminals, once.
+case ":$PATH:" in
+  *":$DIR:"*) on_path=1 ;;
+  *) on_path=0 ;;
+esac
+if [ "$on_path" = 0 ] && [ -z "${INDRA_NO_MODIFY_PATH:-}" ]; then
+  line="export PATH=\"$DIR:\$PATH\""
+  for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+    if [ -f "$rc" ] || [ "$rc" = "$HOME/.profile" ]; then
+      grep -qs "$DIR" "$rc" || { printf '\n# indra\n%s\n' "$line" >> "$rc"; }
+    fi
+  done
+  say "Added $DIR to your PATH (open a new terminal, or run: $line)"
+fi
+
+say ""
+say "Next: start the console and open it in your browser:"
+say ""
+say "    indra serve --open"
+say ""
+say "Update later with: indra update"

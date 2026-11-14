@@ -192,10 +192,10 @@ needs  = ["api", "web"]</code></pre></div>
       </div>
       <div class="card">
         <h3>The indra CLI</h3>
-        <pre><code>cargo install --locked --git \
-  https://github.com/dmdhrumilmistry/indra indra
-indra serve --target ~/code/my-api</code></pre>
-        <p>One ~2.5 MB binary for Linux, macOS and Windows. Optional: reviews run without it.</p>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/\
+dmdhrumilmistry/indra/main/install.sh | sh
+indra serve --open</code></pre>
+        <p>One file for Linux, macOS and Windows (PowerShell: <code>irm https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.ps1 | iex</code>). Optional: reviews run without it.</p>
       </div>
     </div>
   </section>

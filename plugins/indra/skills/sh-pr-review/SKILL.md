@@ -143,9 +143,10 @@ command -v indra >/dev/null || echo "indra is not installed"
 ```
 
    The cache, the metrics and the posting step are `indra review` commands (one binary,
-   no interpreter). If it is missing, install it (a prebuilt `indra-<target>` from the
-   latest `indra-v*` release, or `cargo install --locked --git
-   https://github.com/dmdhrumilmistry/indra indra`; see `references/tooling-setup.md`).
+   no interpreter). If it is missing, install it (`curl -fsSL
+   https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.sh | sh`, or on Windows
+   `irm https://raw.githubusercontent.com/dmdhrumilmistry/indra/main/install.ps1 | iex`; see
+   `references/tooling-setup.md`).
    If that fails, say so and stop.
 2. **Resolve the PR into a repo and a number.** Set `REPO` and `N`, and use both
    everywhere after this. Never call a `gh pr` command without `--repo "$REPO"`: without
