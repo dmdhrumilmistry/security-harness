@@ -14,13 +14,19 @@ on:
   pull_request:
     paths: ["tools/**", ".github/workflows/indra.yml"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Release this commit as indra-v<version> (e.g. 0.2.0; must match tools/indra/Cargo.toml). Empty: just test."
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: indra-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: indra-${{ github.ref }}-${{ inputs.release }}
+  # A release, by tag or by hand, always runs to the end.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.release == '' }}
 
 defaults:
   run:
@@ -56,9 +62,12 @@ jobs:
 
   release:
     name: release (${{ matrix.target }})
-    if: startsWith(github.ref, 'refs/tags/indra-v')
+    # A pushed indra-v* tag, or Actions > indra > Run workflow with a version.
+    if: startsWith(github.ref, 'refs/tags/indra-v') || inputs.release != ''
     needs: test
     runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ inputs.release != '' && format('indra-v{0}', inputs.release) || github.ref_name }}
     permissions:
       contents: write
     strategy:
@@ -81,8 +90,8 @@ jobs:
       - name: The tag matches the crate version
         run: |
           want="indra-v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-          if [ "$GITHUB_REF_NAME" != "$want" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml ($want)"; exit 1
+          if [ "$TAG" != "$want" ]; then
+            echo "::error::release $TAG does not match Cargo.toml ($want)"; exit 1
           fi
       - name: musl tools
         if: matrix.musl
@@ -99,7 +108,6 @@ jobs:
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
           NAME: ${{ steps.pkg.outputs.name }}
         run: |
           # Every matrix job races to create the release; losing that race is fine.
@@ -118,7 +126,7 @@ jobs:
 
           Or download the file for your machine below; each has a .sha256, and SHA256SUMS lists them all."
           gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --notes "$notes" --latest=false \
+            || gh release create "$TAG" --title "$TAG" --notes "$notes" --latest=false --target "$GITHUB_SHA" \
             || gh release view "$TAG" >/dev/null
           gh release upload "$TAG" "$NAME" "$NAME.sha256" --clobber
 
@@ -126,7 +134,7 @@ jobs:
   # scripts, so a pinned version installs the same way.
   checksums:
     name: checksums
-    if: startsWith(github.ref, 'refs/tags/indra-v')
+    if: startsWith(github.ref, 'refs/tags/indra-v') || inputs.release != ''
     needs: release
     runs-on: ubuntu-latest
     permissions:
@@ -141,7 +149,7 @@ jobs:
       - name: SHA256SUMS and the install scripts
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.release != '' && format('indra-v{0}', inputs.release) || github.ref_name }}
         run: |
           export GH_REPO="$GITHUB_REPOSITORY"
           mkdir -p dist && cd dist
