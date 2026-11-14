@@ -99,6 +99,74 @@ pub fn shell() -> PathBuf {
     }
 }
 
+/// The shell a terminal starts by default, and its arguments: the
+/// configured `[terminal] shell`, else the user's.
+pub fn default_shell(cfg: &crate::deck::config::TerminalCfg) -> (PathBuf, Vec<String>) {
+    match cfg
+        .shell
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(s) => (
+            resolve(s).unwrap_or_else(|| PathBuf::from(s)),
+            cfg.args.clone(),
+        ),
+        None => (shell(), cfg.args.clone()),
+    }
+}
+
+/// A shell named by path, or found on PATH.
+fn resolve(s: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(s);
+    if p.is_absolute() {
+        return p.is_file().then_some(p);
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|d| {
+        let c = d.join(s);
+        if c.is_file() {
+            return Some(c);
+        }
+        let e = d.join(format!("{}.exe", s));
+        e.is_file().then_some(e)
+    })
+}
+
+/// The shells a terminal may start: the configured one, `[terminal] shells`,
+/// the user's own, and those listed in /etc/shells (or PowerShell and cmd on
+/// Windows) that are installed. Nothing else can be asked for.
+pub fn shells(cfg: &crate::deck::config::TerminalCfg) -> Vec<PathBuf> {
+    let mut names: Vec<String> = Vec::new();
+    names.push(default_shell(cfg).0.display().to_string());
+    names.extend(cfg.shells.iter().cloned());
+    names.push(shell().display().to_string());
+    if cfg!(windows) {
+        names.extend(["pwsh.exe", "powershell.exe", "cmd.exe"].map(String::from));
+    } else if let Ok(t) = std::fs::read_to_string("/etc/shells") {
+        names.extend(
+            t.lines()
+                .map(str::trim)
+                .filter(|l| l.starts_with('/'))
+                .map(String::from),
+        );
+    }
+    let mut out: Vec<PathBuf> = Vec::new();
+    for n in names {
+        if let Some(p) = resolve(&n) {
+            // One entry per program (/bin/zsh and /usr/bin/zsh are often the same file).
+            let real = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
+            if !out
+                .iter()
+                .any(|o| std::fs::canonicalize(o).unwrap_or_else(|_| o.clone()) == real)
+            {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
 /// Append one line to the terminal log.
 pub fn audit(log_dir: &std::path::Path, spec: &Spec) {
     let _ = std::fs::create_dir_all(log_dir);

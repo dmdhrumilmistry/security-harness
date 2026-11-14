@@ -35,6 +35,23 @@ pub struct ConfigFile {
     pub team: Vec<TeamCfg>,
     /// Where plugins and skills come from (Claude Code plugin marketplaces).
     pub marketplace: Vec<MarketplaceCfg>,
+    /// The browser terminal.
+    pub terminal: TerminalCfg,
+}
+
+/// `[terminal]`: what the browser terminal starts.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct TerminalCfg {
+    /// The shell to start (default: $SHELL, else /bin/sh; PowerShell on Windows).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    /// Its arguments, e.g. ["-l"] for a login shell.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// More shells to offer in the terminal's New form (besides /etc/shells).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shells: Vec<String>,
 }
 
 /// A plugin marketplace or a repository of skills.
@@ -137,6 +154,10 @@ pub struct WorkflowCfg {
     /// One of indra's own (not in the config file).
     #[serde(skip)]
     pub builtin: bool,
+    /// The repository file it came from (`<repo>/.indra/workflows/*.toml`),
+    /// when it is not in the config file.
+    #[serde(skip)]
+    pub source: Option<PathBuf>,
 }
 
 /// One input of a workflow (`[[workflow.input]]`).
@@ -537,6 +558,10 @@ pub struct TaskCfg {
     /// Run another [[workflow]] as this one step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<String>,
+    /// Run this skill (`/<skill> <prompt>`); the prompt is then its
+    /// arguments (default `{target}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
     /// Where the graph editor draws it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pos: Option<[i32; 2]>,
@@ -561,6 +586,40 @@ pub struct ComponentCfg {
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retries: Option<u32>,
+    /// A skill to run, as on a task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+}
+
+/// The prompt that runs `skill` with `args`: Claude Code's slash command
+/// for it, or plain words for other runners.
+pub fn skill_prompt(skill: &str, args: &str, runner: &str) -> String {
+    let args = if args.trim().is_empty() {
+        "{target}"
+    } else {
+        args.trim()
+    };
+    if runner.is_empty() || runner == "claude" || runner.starts_with("claude") {
+        format!("/{} {}", skill, args)
+    } else {
+        format!("Use the \"{}\" skill. Its input: {}", skill, args)
+    }
+}
+
+/// A skill name: letters, digits, `-`, `_`, and `:` for a plugin's skills.
+pub fn validate_skill(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.len() > 100
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+    {
+        return Err(format!(
+            "skill '{}': letters, digits, -, _ and : only",
+            name
+        ));
+    }
+    Ok(())
 }
 
 /// A workflow with its components filled in and its sub-workflows
@@ -644,12 +703,19 @@ pub fn expand_workflow(
                 if x.retries == 0 {
                     x.retries = c.retries.unwrap_or(0);
                 }
+                if x.skill.is_none() {
+                    x.skill = c.skill.clone();
+                }
             }
             if x.node.is_empty() {
                 x.node = crate::deck::nodes::LOCAL.into();
             }
             if x.runner.is_empty() {
                 x.runner = "claude".into();
+            }
+            if let Some(sk) = x.skill.take() {
+                validate_skill(&sk).map_err(|e| at(format!("task '{}': {}", t.id, e)))?;
+                x.prompt = skill_prompt(&sk, &x.prompt, &x.runner);
             }
             x.component = None;
             out.push(x);
@@ -997,6 +1063,11 @@ pub struct Settings {
     pub workflows: Vec<WorkflowCfg>,
     pub teams: Vec<TeamCfg>,
     pub marketplaces: Vec<MarketplaceCfg>,
+    pub terminal: TerminalCfg,
+    /// Workflow files in repositories that could not be used, and why.
+    pub workflow_errors: Vec<String>,
+    /// Where `.indra/workflows/` is looked for: harness roots and targets.
+    pub repo_dirs: Vec<PathBuf>,
 }
 
 /// Settings that the console can replace while it runs (after a config
@@ -1021,6 +1092,11 @@ impl Shared {
 impl Settings {
     pub fn connector(&self, name: &str) -> Option<&ConnectorCfg> {
         self.connectors.iter().find(|c| c.name == name)
+    }
+
+    #[cfg(test)]
+    pub fn workflow(&self, name: &str) -> Option<&WorkflowCfg> {
+        self.workflows.iter().find(|w| w.name == name)
     }
 
     pub fn profile(&self, name: &str) -> Option<&ProfileCfg> {
@@ -1311,6 +1387,79 @@ pub fn default_runners() -> Vec<RunnerCfg> {
     ]
 }
 
+/// Profiles that exist without any configuration, so teams, workflows and
+/// Launch work out of the box. A configured profile with the same name wins.
+pub fn default_profiles() -> Vec<ProfileCfg> {
+    let tools = |t: &[&str]| t.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let edit = tools(&[
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write",
+        "Bash(git diff:*)",
+        "Bash(git status:*)",
+    ]);
+    vec![
+        ProfileCfg {
+            name: "planner".into(),
+            description: "Reads and plans with Opus; changes nothing".into(),
+            runner: Some("claude".into()),
+            model: Some("opus".into()),
+            permission_mode: Some("dontAsk".into()),
+            effort: Some("high".into()),
+            allowed_tools: tools(&[
+                "Read",
+                "Grep",
+                "Glob",
+                "Bash(git log:*)",
+                "Bash(git diff:*)",
+                "Bash(ls:*)",
+            ]),
+            ..Default::default()
+        },
+        ProfileCfg {
+            name: "worker".into(),
+            description: "Does the work with Sonnet, accepting its own edits".into(),
+            runner: Some("claude".into()),
+            model: Some("sonnet".into()),
+            permission_mode: Some("acceptEdits".into()),
+            allowed_tools: edit.clone(),
+            ..Default::default()
+        },
+        ProfileCfg {
+            name: "builder".into(),
+            description: "Small, well-specified steps with Haiku, cheaply".into(),
+            runner: Some("claude".into()),
+            model: Some("haiku".into()),
+            permission_mode: Some("acceptEdits".into()),
+            allowed_tools: edit,
+            ..Default::default()
+        },
+        ProfileCfg {
+            name: "reviewer".into(),
+            description: "Reviews with Opus and fixes small mistakes".into(),
+            runner: Some("claude".into()),
+            model: Some("opus".into()),
+            permission_mode: Some("acceptEdits".into()),
+            ..Default::default()
+        },
+    ]
+}
+
+/// A team made of the default profiles.
+pub fn default_teams() -> Vec<TeamCfg> {
+    vec![TeamCfg {
+        name: "plan-and-build".into(),
+        description: "Opus plans, Sonnet builds, Haiku does the light steps, Opus reviews".into(),
+        planner: "planner".into(),
+        worker: "worker".into(),
+        light_worker: Some("builder".into()),
+        reviewer: Some("reviewer".into()),
+        ..Default::default()
+    }]
+}
+
 pub fn default_presets() -> Vec<PresetCfg> {
     let p = |name: &str, prompt: &str| PresetCfg {
         name: name.into(),
@@ -1406,6 +1555,45 @@ pub fn load(opts: LoadOptions) -> Result<Settings> {
         None => ConfigFile::default(),
     };
     build_settings(&opts, path, &file)
+}
+
+/// What a repository's `.indra/workflows/*.toml` may hold.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RepoFile {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workflow: Vec<WorkflowCfg>,
+    /// Saved tasks the workflows can start from.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub component: Vec<ComponentCfg>,
+}
+
+/// The folder in a repository that holds its workflows.
+pub fn repo_workflow_dir(repo: &Path) -> PathBuf {
+    repo.join(".indra").join("workflows")
+}
+
+/// The workflow files of a repository, in name order.
+pub fn repo_workflow_files(repo: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(repo_workflow_dir(repo))
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "toml"))
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+pub fn read_repo_file(f: &Path) -> Result<RepoFile> {
+    let meta = std::fs::metadata(f).map_err(|e| e.to_string())?;
+    if meta.len() > 1 << 20 {
+        return Err("larger than 1 MB".into());
+    }
+    let text = std::fs::read_to_string(f).map_err(|e| e.to_string())?;
+    toml::from_str(&text).map_err(|e| e.to_string())
 }
 
 /// Names pick things out (on Launch, in workflows), so each must be unique.
@@ -1563,6 +1751,15 @@ pub fn build_settings(
     }
 
     unique("profile", file.profile.iter().map(|p| p.name.as_str()))?;
+    // The default profiles, under any configured with the same name.
+    let mut profiles = file.profile.clone();
+    if file.builtins.unwrap_or(true) {
+        for d in default_profiles() {
+            if !profiles.iter().any(|p| p.name == d.name) {
+                profiles.push(d);
+            }
+        }
+    }
     for p in &file.profile {
         p.opts()
             .validate()
@@ -1580,7 +1777,7 @@ pub fn build_settings(
     }
     let known = |p: &Option<String>, what: &str| -> Result<()> {
         match p {
-            Some(n) if !file.profile.iter().any(|x| &x.name == n) => Err(format!(
+            Some(n) if !profiles.iter().any(|x| &x.name == n) => Err(format!(
                 "{} uses profile '{}', which is not defined",
                 what, n
             )),
@@ -1681,6 +1878,14 @@ pub fn build_settings(
             )?;
         }
     }
+    let mut teams = file.team.clone();
+    if file.builtins.unwrap_or(true) {
+        for d in default_teams() {
+            if !teams.iter().any(|t| t.name == d.name) {
+                teams.push(d);
+            }
+        }
+    }
     let mut presets = file.preset.clone();
     for d in default_presets() {
         if !presets.iter().any(|p| p.name == d.name) {
@@ -1729,16 +1934,51 @@ pub fn build_settings(
             }
         }
     }
-    let mut workflows = Vec::new();
-    for w in &file.workflow {
-        if workflows.iter().any(|x: &WorkflowCfg| x.name == w.name) {
-            return Err(format!("workflow name '{}' is used twice", w.name));
+    // Workflows (and saved tasks) kept in repositories, to commit and share:
+    // `<repo>/.indra/workflows/*.toml` under every harness root and target.
+    let mut repo_dirs: Vec<PathBuf> = Vec::new();
+    for h in &harnesses {
+        for d in std::iter::once(&h.root).chain(h.targets.iter()) {
+            if !repo_dirs.contains(d) {
+                repo_dirs.push(d.clone());
+            }
         }
-        // Ids are checked on the workflow as written, the rest once expanded.
-        crate::deck::nodes::validate_name(&w.name).map_err(|e| format!("workflow name: {}", e))?;
-        let mut w = expand_workflow(w, &file.workflow, &file.component)?;
-        validate_workflow(&w, &node_names)?;
-        validate_inputs(&w)?;
+    }
+    let mut workflow_errors: Vec<String> = Vec::new();
+    let mut all_comps = file.component.clone();
+    let mut repo_raw: Vec<(PathBuf, PathBuf, WorkflowCfg)> = Vec::new();
+    for d in &repo_dirs {
+        for f in repo_workflow_files(d) {
+            match read_repo_file(&f) {
+                Ok(rf) => {
+                    for c in rf.component {
+                        if !all_comps.iter().any(|x| x.name == c.name) {
+                            all_comps.push(c);
+                        }
+                    }
+                    for w in rf.workflow {
+                        repo_raw.push((d.clone(), f.clone(), w));
+                    }
+                }
+                Err(e) => workflow_errors.push(format!("{}: {}", f.display(), e)),
+            }
+        }
+    }
+    for c in &all_comps {
+        if let Some(sk) = &c.skill {
+            validate_skill(sk).map_err(|e| format!("component '{}': {}", c.name, e))?;
+        }
+    }
+    let mut all_raw = file.workflow.clone();
+    for (_, _, w) in &repo_raw {
+        if !all_raw.iter().any(|x| x.name == w.name) {
+            all_raw.push(w.clone());
+        }
+    }
+    // Everything a runnable workflow must pass, once expanded.
+    let finish = |w: &WorkflowCfg| -> Result<()> {
+        validate_workflow(w, &node_names)?;
+        validate_inputs(w)?;
         for t in &w.tasks {
             if t.model.as_deref().is_some_and(|m| m.contains("{input.")) {
                 continue;
@@ -1751,6 +1991,17 @@ pub fn build_settings(
             .validate()
             .map_err(|e| format!("workflow '{}' task '{}': {}", w.name, t.id, e))?;
         }
+        Ok(())
+    };
+    let mut workflows = Vec::new();
+    for w in &file.workflow {
+        if workflows.iter().any(|x: &WorkflowCfg| x.name == w.name) {
+            return Err(format!("workflow name '{}' is used twice", w.name));
+        }
+        // Ids are checked on the workflow as written, the rest once expanded.
+        crate::deck::nodes::validate_name(&w.name).map_err(|e| format!("workflow name: {}", e))?;
+        let mut w = expand_workflow(w, &all_raw, &all_comps)?;
+        finish(&w)?;
         // Local targets are relative to the config file; remote ones are the
         // remote's business. One from an input is resolved when it runs.
         for t in &mut w.tasks {
@@ -1759,6 +2010,55 @@ pub fn build_settings(
             }
         }
         workflows.push(w);
+    }
+    // A repository's workflow runs in that repository unless it says
+    // otherwise; one that cannot be used is listed, never fatal (it may name
+    // a profile or node only its author has).
+    for (repo, f, w) in &repo_raw {
+        if workflows.iter().any(|x: &WorkflowCfg| x.name == w.name) {
+            workflow_errors.push(format!(
+                "{}: workflow '{}' is not used: one with that name is already defined{}",
+                f.display(),
+                w.name,
+                if file.workflow.iter().any(|x| x.name == w.name) {
+                    " in your indra.toml"
+                } else {
+                    ""
+                }
+            ));
+            continue;
+        }
+        let built = (|| -> Result<WorkflowCfg> {
+            crate::deck::nodes::validate_name(&w.name)
+                .map_err(|e| format!("workflow name: {}", e))?;
+            for t in &w.tasks {
+                if t.workflow.is_none()
+                    && !t.profile.as_deref().is_some_and(|p| p.contains("{input."))
+                {
+                    known(
+                        &t.profile,
+                        &format!("workflow '{}' task '{}'", w.name, t.id),
+                    )?;
+                }
+            }
+            let mut x = expand_workflow(w, &all_raw, &all_comps)?;
+            for t in &mut x.tasks {
+                if t.node == crate::deck::nodes::LOCAL && !t.target.contains("{input.") {
+                    t.target = if t.target.trim().is_empty() {
+                        repo.to_string_lossy().into_owned()
+                    } else {
+                        abs(expand(repo, &t.target)).to_string_lossy().into_owned()
+                    };
+                }
+            }
+            finish(&x)?;
+            x.source = Some(f.clone());
+            Ok(x)
+        })();
+        match built {
+            Ok(x) => workflows.push(x),
+            Err(e) => workflow_errors.push(format!("{}: {}", f.display(), e)),
+        }
     }
     // indra's own workflows, for its harness, unless configured otherwise.
     if file.builtins.unwrap_or(true) && harnesses.iter().any(|h| h.name == "indra") {
@@ -1773,9 +2073,9 @@ pub fn build_settings(
         harnesses,
         runners,
         presets,
-        profiles: file.profile.clone(),
+        profiles: profiles.clone(),
         connectors: file.connector.clone(),
-        components: file.component.clone(),
+        components: all_comps.clone(),
         local_max_parallel: file.local.max_parallel.unwrap_or(4).max(1),
         webrtc: file.server.webrtc.unwrap_or(true),
         ice_servers: ice_servers(&file.server)?,
@@ -1790,7 +2090,10 @@ pub fn build_settings(
         config_path: path.map(abs),
         data_dir: data_dir(),
         marketplaces: file.marketplace.clone(),
-        teams: file.team.clone(),
+        teams,
+        terminal: file.terminal.clone(),
+        workflow_errors,
+        repo_dirs,
     })
 }
 
@@ -2184,5 +2487,104 @@ needs = ["sub"]
             let f: ConfigFile = toml::from_str(&format!("builtins = false\n{}", bad)).unwrap();
             assert!(build_settings(&opts, None, &f).is_err(), "{}", bad);
         }
+    }
+
+    #[test]
+    fn defaults_workflows_in_repositories_and_skill_steps() {
+        let base = std::env::temp_dir().join(format!("indra-repo-wf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("api");
+        let wfdir = repo.join(".indra/workflows");
+        std::fs::create_dir_all(&wfdir).unwrap();
+        // A shared workflow: no target (the repository), a default profile,
+        // a skill step, and a saved task kept next to it.
+        std::fs::write(
+            wfdir.join("triage.toml"),
+            "[[component]]\nname = \"lint\"\nprompt = \"lint {target}\"\n\n\
+[[workflow]]\nname = \"triage\"\n\
+[[workflow.task]]\nid = \"scan\"\nskill = \"sh-security-review\"\nprompt = \"{target} stage:recon\"\nprofile = \"planner\"\n\
+[[workflow.task]]\nid = \"lint\"\ncomponent = \"lint\"\ntarget = \"sub\"\nneeds = [\"scan\"]\n",
+        )
+        .unwrap();
+        // One naming a profile only its author has: listed, not fatal.
+        std::fs::write(
+            wfdir.join("theirs.toml"),
+            "[[workflow]]\nname = \"theirs\"\n[[workflow.task]]\nid = \"a\"\nprompt = \"p\"\nprofile = \"only-on-my-laptop\"\n",
+        )
+        .unwrap();
+        std::fs::write(wfdir.join("broken.toml"), "[[workflow]\n").unwrap();
+        // Same name as one in the config file: the config file wins.
+        std::fs::write(
+            wfdir.join("mine.toml"),
+            "[[workflow]]\nname = \"mine\"\n[[workflow.task]]\nid = \"a\"\nprompt = \"from the repo\"\n",
+        )
+        .unwrap();
+        let opts = LoadOptions {
+            config: None,
+            targets: vec![repo.clone()],
+            bind: None,
+            read_only: false,
+            cwd: base.clone(),
+        };
+        let f: ConfigFile = toml::from_str(
+            "[[workflow]]\nname = \"mine\"\n[[workflow.task]]\nid = \"a\"\ntarget = \".\"\nprompt = \"from the config\"\n",
+        )
+        .unwrap();
+        let s = build_settings(&opts, None, &f).unwrap();
+        // Defaults: profiles and a team, with no configuration at all.
+        for p in ["planner", "worker", "builder", "reviewer"] {
+            assert!(s.profile(p).is_some(), "{}", p);
+        }
+        assert!(s.teams.iter().any(|t| t.name == "plan-and-build"));
+        let t = s
+            .workflows
+            .iter()
+            .find(|w| w.name == "triage")
+            .expect("loaded");
+        let repo_abs = std::fs::canonicalize(&repo).unwrap();
+        assert!(t.source.as_ref().unwrap().ends_with("triage.toml"));
+        assert_eq!(
+            t.tasks[0].prompt,
+            "/sh-security-review {target} stage:recon"
+        );
+        assert_eq!(t.tasks[0].target, repo_abs.to_string_lossy());
+        assert_eq!(t.tasks[1].prompt, "lint {target}");
+        assert!(t.tasks[1].target.ends_with("sub"));
+        assert!(s.components.iter().any(|c| c.name == "lint"));
+        let mine = s.workflows.iter().find(|w| w.name == "mine").unwrap();
+        assert_eq!(mine.tasks[0].prompt, "from the config");
+        assert!(mine.source.is_none());
+        let errs = s.workflow_errors.join("\n");
+        assert!(
+            errs.contains("theirs.toml") && errs.contains("only-on-my-laptop"),
+            "{}",
+            errs
+        );
+        assert!(errs.contains("broken.toml"), "{}", errs);
+        assert!(
+            errs.contains("mine.toml") && errs.contains("your indra.toml"),
+            "{}",
+            errs
+        );
+        assert!(!s.workflows.iter().any(|w| w.name == "theirs"));
+        // A configured profile replaces the default one; builtins = false drops them.
+        let f: ConfigFile =
+            toml::from_str("[[profile]]\nname = \"planner\"\nmodel = \"sonnet\"\n").unwrap();
+        let s = build_settings(&opts, None, &f).unwrap();
+        assert_eq!(
+            s.profile("planner").unwrap().model.as_deref(),
+            Some("sonnet")
+        );
+        let f: ConfigFile = toml::from_str("builtins = false\n").unwrap();
+        let s = build_settings(&opts, None, &f).unwrap();
+        assert!(s.profile("planner").is_none() && s.teams.is_empty());
+        // Skills: other runners get words, names are checked.
+        assert_eq!(
+            skill_prompt("triage", "", "codex"),
+            "Use the \"triage\" skill. Its input: {target}"
+        );
+        assert!(validate_skill("plugin:skill-1").is_ok());
+        assert!(validate_skill("x; rm -rf /").is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -518,6 +518,18 @@ A profile is a named way to run an agent: a runner with a model, permission mode
 rules and environment. Launch, presets, workflow tasks and fan-outs pick one, and model and mode
 can still be changed per launch or while the agent runs. **Settings > Profiles** has templates.
 
+**Built in, so nothing needs configuring:** four Claude Code profiles and a team that uses them.
+A `[[profile]]` or `[[team]]` with the same name replaces one (**Customize** in Settings), and
+`builtins = false` turns them off.
+
+| Name | What it is |
+|---|---|
+| `planner` | Opus, high effort, read-only tools: reads and plans, changes nothing |
+| `worker` | Sonnet, accepts its own edits: does the work |
+| `builder` | Haiku, accepts its own edits: small, well-specified steps, cheaply |
+| `reviewer` | Opus, accepts its own edits: reviews and fixes small mistakes |
+| team `plan-and-build` | planner plans, worker builds, builder takes the light steps, reviewer checks |
+
 ```toml
 [[profile]]
 name            = "planner"
@@ -698,7 +710,18 @@ Terminals open as tabs in one **terminals** browser tab: each has its own tab wi
 its number and a **×** to close it, and **+ New** opens a shell or Claude Code (with a profile)
 in any target. While that page is open, the console's buttons add a tab to it instead of opening
 another window. Keys: Ctrl+Shift+T new, Ctrl+Shift+W close, Ctrl+Shift+PageUp/PageDown switch.
-A terminal whose program exits keeps its tab (and its output) with **Start again**. The
+A terminal whose program exits keeps its tab (and its output) with **Start again**.
+**Which shell:** `$SHELL` unless `[terminal]` says otherwise (also in **Settings > General**);
+the Terminal page and the New form offer the configured shell, `shells`, and those installed from
+`/etc/shells` (PowerShell and cmd on Windows), and nothing else can be started:
+
+```toml
+[terminal]
+shell  = "/bin/zsh"              # the default for new terminals
+args   = ["-l"]                  # a login shell
+shells = ["/opt/homebrew/bin/fish"]
+```
+ The
 Terminal page lists **Running terminals** on this machine, from any browser, with who opened
 each and a **Close** button. Closing a terminal, by its **×**, from the list, or by closing
 the page, hangs it up and ends what it started, background jobs included
@@ -887,13 +910,31 @@ indra run                                # lists the workflows and their inputs 
 ```
 
 **The graph editor.** **Workflows > New workflow** (or **Edit graph** on a workflow) opens a
-canvas: drag tasks, components and other workflows in from the palette, drag from a task's right
-edge to another task to make it run after the first, and edit the selected step on the right.
-Saving writes the same `[[workflow]]` TOML, with each task's position, so `indra run` and the
-text editor keep working.
+canvas: drag tasks, skills, saved tasks and other workflows in from the palette (or select one
+and press Enter), drag from a step's right edge to another step to make it run after the first,
+and edit the selected step on the right. Remove a step with its **Delete step** button, the x on
+the selected step, or the Delete key (**Undo** brings it back); remove an arrow by selecting it
+and pressing Delete. Saving writes the same `[[workflow]]` TOML, with each step's position, so
+`indra run` and the text editor keep working.
 
-**Components** are reusable tasks. A task can start from one and override any field, and the
-editor's **Save as component** turns a task into one:
+**Skills as steps.** A step can run one of the harness's skills instead of a free prompt: drag it
+from **Skills** in the palette, or write `skill = "<name>"`. For Claude Code it runs as the
+skill's slash command, `/<skill> <prompt>`, so `prompt` holds the skill's arguments (default
+`{target}`); other runners are told to use the skill.
+
+```toml
+[[workflow.task]]
+id     = "recon"
+skill  = "sh-security-review"
+prompt = "{target} stage:recon"          # becomes: /sh-security-review {target} stage:recon
+```
+
+**Saved tasks** (`[[component]]` in the file) are tasks kept for reuse: a task, a skill step or a
+prompt with its profile, runner, node and target, that any workflow can drag in. A step that
+starts from one overrides any field, and changing the saved task changes every workflow that
+uses it. The editor's **Save for reuse** turns a step into one. (A task is one step of one
+workflow; a saved task is a template for steps. Where a step runs is its **node** and
+**target**, the repository or folder.)
 
 ```toml
 [[component]]
@@ -908,6 +949,43 @@ component = "review"
 node      = "build-box"
 target    = "/srv/api"
 ```
+
+**Workflows as code.** A workflow can live in the repository it works on, as
+`.indra/workflows/<name>.toml`, to be reviewed, committed and shared like any other code. Every
+console and `indra run` with that repository as a harness root or target picks it up, and a
+`git pull` that changes the files is seen without a restart.
+
+```toml
+# api/.indra/workflows/triage.toml
+[[workflow]]
+name = "triage"
+
+[[workflow.task]]
+id      = "recon"
+skill   = "sh-security-review"
+prompt  = "{target} stage:recon"
+profile = "planner"                      # a built-in profile, so it works for everyone
+
+[[workflow.task]]
+id        = "lint"
+component = "lint"                       # a saved task kept in the same file
+needs     = ["recon"]
+
+[[component]]
+name   = "lint"
+prompt = "Run the linters on {target} and fix what they report."
+```
+
+- A step without a target runs in that repository; a relative target is inside it.
+- The file holds `[[workflow]]` and `[[component]]` tables, in the same format as `indra.toml`.
+- In the editor, **Saved in** chooses between this machine's `indra.toml` and a repository
+  (the file's path is shown); saving to a repository also copies in the saved tasks the workflow
+  uses, so the file stands on its own. Moving a workflow between the two moves it.
+- A workflow in your `indra.toml` with the same name wins. A file that cannot be used (bad
+  TOML, or a profile or node only its author has) is listed on the **Workflows** page and never
+  stops the console; the built-in profiles exist everywhere, so shared workflows that use them
+  just work.
+- Saving to a repository needs the admin role, like other settings.
 
 **Workflows compose.** A task with `workflow = "<name>"` runs that workflow as one step: its
 first tasks start after the step's `needs`, and anything that needs the step waits for its last

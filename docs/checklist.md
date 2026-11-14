@@ -76,6 +76,16 @@ their section; nothing is deleted, items are checked off with the change that di
       `indra update --auto on` installs them by itself (SHA-256 checked; the console shows it too)
 - [x] Tab completion: `indra completions` for bash, zsh, fish and PowerShell, set up by the
       installers, refreshed by `indra update`
+- [x] Workflow editor: delete a step (button at the top of the panel, x on the step, Delete key,
+      Undo); steps added from the palette no longer land on top of each other
+- [x] Workflows as code: `<repo>/.indra/workflows/*.toml`, picked up from every harness root and
+      target, saved there from the editor (Saved in), seen after a `git pull`, bad files listed
+- [x] Built-in profiles (planner, worker, builder, reviewer) and team (plan-and-build), so the
+      Team form and shared workflows work with no configuration (the empty Planner/Worker bug)
+- [x] Skills as workflow steps (`skill = "<name>"`, Skills in the palette); "components" are now
+      called saved tasks in the console
+- [x] Terminal shell is configurable (`[terminal]`, Settings > General) and pickable per terminal
+- [x] Several boards: create, rename, delete (move or drop items), trackers per board, move items
 
 ## Not planned yet (the docs say so)
 

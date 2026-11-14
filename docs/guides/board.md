@@ -22,6 +22,23 @@ works for security reviews, fixes, research or anything else an agent can do.
 - **Export** downloads the board's items as JSON; **Import file** adds items from such a file
   (a list of objects with at least a `title`), for example to move work between consoles.
 
+## Several boards
+
+Keep separate work apart: a board per team, project, engagement or tracker. The tabs above the
+columns switch boards (the console remembers the last one), and the counts show how many items
+each holds.
+
+- **+ New board** adds one; **Board settings** renames the current board, describes it, and picks
+  the trackers it imports from. Each tracker feeds one board; a tracker no board has ticked feeds
+  the first one.
+- New items, **Import file** and **Export** work on the board you are looking at, and an item's
+  **Edit** form can move it to another board.
+- **Delete board** moves its items to another board or deletes them with it (their tracker
+  items are not touched). The first board cannot be deleted, only renamed, and a board with an
+  agent at work on one of its items cannot be deleted until that agent stops.
+- Boards live with the board's items in the console's data directory (`board.json`); items from
+  before boards existed are on the first board.
+
 ## Connect a tracker
 
 **Settings > Connectors** adds Jira, GitHub Issues, ClickUp or Linear. A connector imports matching items

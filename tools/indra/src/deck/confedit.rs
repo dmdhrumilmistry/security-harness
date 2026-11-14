@@ -19,10 +19,11 @@ use std::path::Path;
 use toml_edit::{DocumentMut, Item};
 
 /// The top-level keys of `indra.toml`, in the order a new file gets them.
-pub const SECTIONS: [&str; 13] = [
+pub const SECTIONS: [&str; 14] = [
     "builtins",
     "server",
     "local",
+    "terminal",
     "harness",
     "runner",
     "profile",
@@ -84,6 +85,7 @@ fn fragment(section: &str, value: &Value) -> Result<Option<(String, Value)>> {
         "builtins" => typed::<bool>(section, value),
         "server" => typed::<ServerCfg>(section, value),
         "local" => typed::<LocalCfg>(section, value),
+        "terminal" => typed::<crate::deck::config::TerminalCfg>(section, value),
         "harness" => typed::<Vec<HarnessCfg>>(section, value),
         "runner" => typed::<Vec<RunnerCfg>>(section, value),
         "preset" => typed::<Vec<PresetCfg>>(section, value),
