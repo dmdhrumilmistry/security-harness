@@ -1936,9 +1936,15 @@ pub fn build_settings(
     }
     // Workflows (and saved tasks) kept in repositories, to commit and share:
     // `<repo>/.indra/workflows/*.toml` under every harness root and target.
+    // Also the targets given on the command line (or the current folder),
+    // so `indra run` inside a repository finds its workflows with no harness.
     let mut repo_dirs: Vec<PathBuf> = Vec::new();
-    for h in &harnesses {
-        for d in std::iter::once(&h.root).chain(h.targets.iter()) {
+    for h in harnesses
+        .iter()
+        .map(|h| (Some(&h.root), &h.targets))
+        .chain(std::iter::once((None, &default_targets)))
+    {
+        for d in h.0.into_iter().chain(h.1.iter()) {
             if !repo_dirs.contains(d) {
                 repo_dirs.push(d.clone());
             }
