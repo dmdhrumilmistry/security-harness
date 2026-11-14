@@ -65,7 +65,8 @@ their section; nothing is deleted, items are checked off with the change that di
 - [x] Terminal: prompt icons render (Nerd Font symbols bundled, UTF-8 locale) (#38)
 - [x] Workflows take inputs; **pr-review** and **security-review** are built-in workflows;
       Runs has **Run a workflow** instead of a PR-only form; `indra run NAME --input k=v`
-- [ ] Users and roles (RBAC) for the console instead of an access token in the URL
+- [x] Users and roles (RBAC) for the console instead of an access token in the URL: sign-in,
+      viewer/operator/admin checked on every call, Settings > Users, `indra user`, audit log
 
 ## Not planned yet (the docs say so)
 

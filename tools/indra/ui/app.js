@@ -108,13 +108,54 @@
   function hq(extra) { var p = { h: S.h }; Object.keys(extra || {}).forEach(function (k) { p[k] = extra[k]; }); return q(p); }
   function harness() { return S.ov && (S.ov.harnesses.find(function (x) { return x.name === S.h; }) || S.ov.harnesses[0]); }
 
+  // Not signed in: a sign-in form when the console has users, else how to
+  // use the access token.
+  var walled = false;
   function authWall() {
+    if (walled) return;
+    walled = true;
+    document.body.classList.add("walled");
     var m = $("main");
     m.textContent = "";
-    m.appendChild(h("div", { class: "authwall card" },
-      h("h1", { text: "Access token needed" }),
-      h("p", { text: "indra printed a URL containing an access token when it started. Open that URL once in this browser; it sets a cookie and you will not need it again until indra restarts." }),
-      h("p", { class: "muted", text: "The token protects the console because it can start agents and edit prompts on this machine." })));
+    fetch("/api/session", { credentials: "same-origin" }).then(function (r) { return r.json(); }).catch(function () { return {}; }).then(function (sess) {
+      if (!sess.users) {
+        m.appendChild(h("div", { class: "authwall card" },
+          h("h1", { text: "Access token needed" }),
+          h("p", { text: "indra printed a URL containing an access token when it started. Open that URL once in this browser; it sets a cookie and you will not need it again until indra restarts." }),
+          h("p", { class: "muted", text: "For named accounts with roles instead, an admin adds users in Settings > Users (or `indra user add NAME`)." })));
+        return;
+      }
+      var name = h("input", { type: "text", autocomplete: "username", required: true, "aria-label": "User name" });
+      var pw = h("input", { type: "password", autocomplete: "current-password", required: true, "aria-label": "Password" });
+      var err = h("div", { class: "note bad", hidden: true, role: "alert" });
+      var go = h("button", { class: "primary", type: "submit" }, "Sign in");
+      m.appendChild(h("form", { class: "authwall card form signin", onsubmit: function (e) {
+        e.preventDefault(); go.disabled = true; err.hidden = true;
+        fetch("/api/login", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: name.value.trim(), password: pw.value }) })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (r) {
+            if (!r.ok) { err.textContent = r.j.error || "Sign-in failed"; err.hidden = false; go.disabled = false; pw.select(); return; }
+            location.reload();
+          }).catch(function (e2) { err.textContent = e2.message; err.hidden = false; go.disabled = false; });
+      } },
+        h("h1", { text: "Sign in to indra" }),
+        h("label", null, "User name", name), h("label", null, "Password", pw), err,
+        h("div", { class: "row" }, go),
+        h("p", { class: "muted small", text: "No account? Ask an admin of this console. Admins manage users in Settings > Users or with `indra user`." })));
+      name.focus();
+    });
+  }
+
+  function signOut() {
+    fetch("/api/logout", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: "{}" }).then(function () { location.hash = ""; location.reload(); });
+  }
+
+  function changeOwnPassword() {
+    var cur = window.prompt("Your current password:"); if (cur == null) return;
+    var next = window.prompt("New password (at least 10 characters):"); if (!next) return;
+    if (window.prompt("The new password again:") !== next) { toast("The two new passwords differ", true); return; }
+    api("/api/session/password", { method: "PUT", body: { current: cur, new: next } }).then(function () { toast("Password changed; sign in again"); setTimeout(signOut, 800); })
+      .catch(function (e) { toast(e.message, true); });
   }
 
   // ---- force-directed graph on a canvas ---------------------------------------
@@ -2636,7 +2677,7 @@
   // a save replaces that one section on the server, which keeps the rest of
   // the file (comments included), checks the result, and applies it at once.
   var TABS = [["general", "General"], ["profiles", "Profiles"], ["runners", "Runners"], ["nodes", "Nodes"], ["workflows", "Workflows"], ["components", "Components"],
-    ["presets", "Presets"], ["teams", "Teams"], ["marketplaces", "Marketplaces"], ["harnesses", "Harnesses"], ["connectors", "Connectors"], ["secrets", "Secrets"], ["file", "File"]];
+    ["presets", "Presets"], ["teams", "Teams"], ["marketplaces", "Marketplaces"], ["harnesses", "Harnesses"], ["connectors", "Connectors"], ["secrets", "Secrets"], ["users", "Users"], ["file", "File"]];
 
   function opts(list, blank) { return (blank ? [["", blank]] : []).concat(list.map(function (x) { return [x, x]; })); }
   function cfgRunnerNames(c) {
@@ -2924,7 +2965,7 @@
       }
       ({ general: general, profiles: function () { list("profile"); }, runners: function () { list("runner", c.builtin.runners); }, nodes: function () { list("node"); },
         workflows: function () { list("workflow"); }, presets: function () { list("preset", c.builtin.presets); },
-        harnesses: function () { list("harness", c.builtin.harnesses); }, connectors: function () { list("connector"); }, components: function () { list("component"); }, teams: function () { list("team"); }, marketplaces: function () { list("marketplace"); }, secrets: secrets, file: file })[tab]();
+        harnesses: function () { list("harness", c.builtin.harnesses); }, connectors: function () { list("connector"); }, components: function () { list("component"); }, teams: function () { list("team"); }, marketplaces: function () { list("marketplace"); }, secrets: secrets, users: usersTab, file: file })[tab]();
     }
 
     function general() {
@@ -3022,6 +3063,51 @@
     }
 
     // Secrets live in an encrypted store, not in indra.toml: this tab talks to /api/secrets.
+    // Who may sign in, and what each may do.
+    function usersTab() {
+      var box = h("div"); body.appendChild(box);
+      var ROLES = [["viewer", "viewer: reads everything but settings, secrets and the terminal"], ["operator", "operator: also runs, steers and stops agents and workflows, triages, publishes and posts"], ["admin", "admin: also settings, secrets, users, the terminal, installs and machines"]];
+      function load() {
+        api("/api/users").then(function (list) {
+          box.textContent = "";
+          box.appendChild(h("p", { class: "muted", text: list.length
+            ? "People sign in with a name and password; each request is allowed by role. The access token " + "indra serve" + " prints is now a key for tools only (indra attach, scripts), not for signing in."
+            : "No users yet: whoever has the access token can do everything. Add the first user (always an admin) to switch the console to sign-in with roles; this browser will then ask you to sign in." }));
+          if (list.length) box.appendChild(h("div", { class: "tablewrap" }, h("table", null,
+            h("thead", null, h("tr", null, ["User", "Role", "", ""].map(function (x) { return h("th", { text: x }); }))),
+            h("tbody", null, list.map(function (u) {
+              var role = h("select", { "aria-label": "Role of " + u.name }, ROLES.map(function (r) { return h("option", { value: r[0], text: r[0] }); }));
+              role.value = u.role;
+              role.addEventListener("change", function () {
+                api("/api/users/" + encodeURIComponent(u.name), { method: "PATCH", body: { role: role.value } }).then(function () { toast(u.name + " is now " + role.value); load(); })
+                  .catch(function (e) { toast(e.message, true); role.value = u.role; });
+              });
+              return h("tr", null, h("td", null, h("b", { text: u.name })), h("td", null, role),
+                h("td", null, h("button", { type: "button", onclick: function () {
+                  var p = window.prompt("New password for " + u.name + " (at least 10 characters; their sessions end):"); if (!p) return;
+                  api("/api/users/" + encodeURIComponent(u.name), { method: "PATCH", body: { password: p } }).then(function () { toast("Password set for " + u.name); }).catch(function (e) { toast(e.message, true); });
+                } }, "Set password")),
+                h("td", null, h("button", { type: "button", class: "danger", onclick: function () {
+                  if (!window.confirm("Remove " + u.name + "? They are signed out.")) return;
+                  api("/api/users/" + encodeURIComponent(u.name), { method: "DELETE" }).then(function () { toast("Removed " + u.name); load(); }).catch(function (e) { toast(e.message, true); });
+                } }, "Remove")));
+            })))));
+          var n = h("input", { type: "text", required: true, placeholder: "alice", autocomplete: "off", "aria-label": "New user name" });
+          var r = h("select", { "aria-label": "New user role" }, ROLES.map(function (x) { return h("option", { value: x[0], text: x[1] }); })); r.value = list.length ? "operator" : "admin"; r.disabled = !list.length;
+          var p = h("input", { type: "password", required: true, autocomplete: "new-password", placeholder: "at least 10 characters", "aria-label": "New user password" });
+          box.appendChild(h("form", { class: "form card", onsubmit: function (e) {
+            e.preventDefault();
+            api("/api/users", { method: "POST", body: { name: n.value.trim(), role: r.value, password: p.value } }).then(function () {
+              toast("Added " + n.value.trim()); if (!list.length) { setTimeout(function () { location.reload(); }, 900); } else load();
+            }).catch(function (err) { toast(err.message, true); });
+          } }, h("h3", { text: list.length ? "Add a user" : "Add the first user (an admin)" }),
+            h("div", { class: "fields" }, h("label", null, "Name", n), h("label", null, "Role", r), h("label", null, "Password", p)),
+            h("div", { class: "row" }, h("button", { type: "submit", class: "primary" }, "Add"))));
+        }).catch(function (e) { box.textContent = ""; box.appendChild(empty(e.message)); });
+      }
+      load();
+    }
+
     function secrets() {
       var box = h("div", { class: "muted", text: "Loading secrets..." });
       body.appendChild(h("p", { class: "muted", text: "Tokens and keys for agents, encrypted on this machine and never shown again once saved. A profile uses one through its environment, as KEY=secret:<name>; the agent gets the value when it starts, only if the secret's scope allows that profile and node, and its output shows [secret:<name>] instead." }));
@@ -3122,6 +3208,14 @@
       sel.value = S.h;
       $("version").textContent = "v" + ov.version;
       $("ro-badge").hidden = !ov.read_only;
+      // Who is signed in, and what only admins can open.
+      var who = $("who"); who.textContent = "";
+      if (ov.users) {
+        who.appendChild(h("span", { class: "muted small", text: ov.user + " (" + ov.role + ")" }));
+        if (ov.user !== "token") who.appendChild(h("button", { type: "button", class: "ghost small", onclick: changeOwnPassword }, "Password"));
+        who.appendChild(h("button", { type: "button", class: "ghost small", onclick: signOut }, ov.user === "token" ? "Forget" : "Sign out"));
+      }
+      Array.prototype.forEach.call(document.querySelectorAll('#nav a[data-route="settings"], #nav a[data-route="terminal"]'), function (a) { a.hidden = !ov.is_admin; });
       var b = $("running-badge"); b.hidden = !ov.running; b.textContent = String(ov.running);
       var a = $("approvals-badge"); a.hidden = !ov.approvals; a.textContent = String(ov.approvals || 0);
       a.title = ov.approvals ? ov.approvals + " tool request(s) waiting for you" : "";

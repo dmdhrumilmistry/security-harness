@@ -108,6 +108,14 @@ file = "docs/guides/plan-and-delegate.md"
 
 [[page]]
 group = "Guides"
+slug = "users-and-roles"
+title = "Users and roles"
+description = "Accounts for a team: sign in with a name and password, viewer, operator and admin roles, an audit log."
+[[page.source]]
+file = "docs/guides/users-and-roles.md"
+
+[[page]]
+group = "Guides"
 slug = "review-loop"
 title = "Reviewing pull requests from the console"
 description = "Start a PR review, triage its findings, compare it with the last review, remember, publish and post."

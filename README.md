@@ -118,6 +118,7 @@ That's it. The console opens in your browser: launch agents, watch them, read th
 | Use the console (the "server") | `indra serve --open` |
 | Run agents on another machine too | install there the same way, then paste the line the console shows under **Nodes > Add a machine** |
 | Run Claude Code on a local model (Ollama) | `indra claude -m qwen3-coder --pull` |
+| Give a team accounts and roles | `indra user add alice` (see [users and roles](docs/guides/users-and-roles.md)) |
 | Get the newest version | `indra update` |
 | Uninstall | delete the `indra` file (`~/.local/bin/indra`, or `%LOCALAPPDATA%\Programs\indra` on Windows) |
 
