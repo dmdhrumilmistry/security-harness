@@ -19,7 +19,10 @@
   var term = new Terminal({
     cursorBlink: true,
     fontSize: 13,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    // A Nerd Font the viewer has installed first (they match its prompt
+    // exactly), then the usual monospace, then the bundled symbols for any
+    // icon the text font lacks.
+    fontFamily: '"MesloLGS NF", "JetBrainsMono Nerd Font", "FiraCode Nerd Font", "Hack Nerd Font", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace, "Symbols Nerd Font Mono"',
     scrollback: 5000,
     theme: {
       background: v("--panel", dark ? "#1b1b1a" : "#ffffff"),
@@ -30,9 +33,11 @@
   });
   var fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  term.open($("term"));
-  fit.fit();
-  term.focus();
+  // Open once the symbols font is in, so its icons are measured right
+  // (a second at most; without it the terminal still works).
+  var fontReady = (document.fonts && document.fonts.load)
+    ? Promise.race([document.fonts.load('13px "Symbols Nerd Font Mono"', "\ue0b0\uf07b"), new Promise(function (r) { setTimeout(r, 1500); })]).catch(function () {})
+    : Promise.resolve();
 
   var ws = null;
   var enc = new TextEncoder();
@@ -80,5 +85,10 @@
       });
   }
   $("again").addEventListener("click", function () { term.reset(); start(); });
-  start();
+  fontReady.then(function () {
+    term.open($("term"));
+    fit.fit();
+    term.focus();
+    start();
+  });
 })();

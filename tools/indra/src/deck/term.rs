@@ -33,6 +33,17 @@ pub struct Spec {
     pub env: Vec<(String, String)>,
 }
 
+/// Whether the locale this process passes on is UTF-8 (LC_ALL wins, then
+/// LC_CTYPE, then LANG, as the C library decides).
+fn utf8_locale() -> bool {
+    let v = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+        .unwrap_or_default()
+        .to_lowercase();
+    v.contains("utf-8") || v.contains("utf8")
+}
+
 /// The user's shell.
 pub fn shell() -> PathBuf {
     if cfg!(windows) {
@@ -96,6 +107,20 @@ pub async fn bridge(spec: Spec, socket: axum::extract::ws::WebSocket) {
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // A UTF-8 locale, or shells cannot print the icons and box drawing
+        // prompts use (indra may run from a service with no locale at all).
+        if !utf8_locale() {
+            cmd.env(
+                "LANG",
+                if cfg!(target_os = "macos") {
+                    "en_US.UTF-8"
+                } else {
+                    "C.UTF-8"
+                },
+            );
+            cmd.env_remove("LC_ALL");
+            cmd.env_remove("LC_CTYPE");
+        }
         let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
         drop(pair.slave);
         let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;

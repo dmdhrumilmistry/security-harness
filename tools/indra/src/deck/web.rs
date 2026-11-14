@@ -131,6 +131,10 @@ const XTERM_JS: &str = include_str!("../../ui/vendor/xterm.js");
 const XTERM_CSS: &str = include_str!("../../ui/vendor/xterm.css");
 const XTERM_FIT_JS: &str = include_str!("../../ui/vendor/addon-fit.js");
 const XTERM_LICENSE: &str = include_str!("../../ui/vendor/LICENSE-xterm");
+/// Nerd Fonts' symbols (v3.4.0, MIT): the icons shell prompts draw
+/// (Powerlevel10k, Starship, oh-my-posh), as a fallback after the text font.
+const NERD_FONT: &[u8] = include_bytes!("../../ui/vendor/symbols-nerd-font-mono.woff2");
+const NERD_FONT_LICENSE: &str = include_str!("../../ui/vendor/LICENSE-nerd-fonts");
 /// The terminal page only: xterm.js sets styles with a `<style>` element, so
 /// it needs inline styles. Scripts stay `'self'`.
 const TERM_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
@@ -2280,6 +2284,23 @@ pub fn router(app: Arc<App>) -> Router {
         .route(
             "/vendor/LICENSE-xterm",
             get(|| async { asset("text/plain; charset=utf-8", XTERM_LICENSE) }),
+        )
+        .route(
+            "/vendor/symbols-nerd-font-mono.woff2",
+            get(|| async {
+                (
+                    [
+                        (header::CONTENT_TYPE, "font/woff2"),
+                        (header::CACHE_CONTROL, "public, max-age=604800"),
+                    ],
+                    NERD_FONT,
+                )
+                    .into_response()
+            }),
+        )
+        .route(
+            "/vendor/LICENSE-nerd-fonts",
+            get(|| async { asset("text/plain; charset=utf-8", NERD_FONT_LICENSE) }),
         )
         .route("/api/knowledge", get(crate::deck::knowledge::vaults))
         .route(
